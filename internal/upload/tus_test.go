@@ -306,23 +306,22 @@ func TestUploadLifecycle_DuplicateFolder_GetsSuffix(t *testing.T) {
 		return waitComplete(t, doneCh)
 	}
 
+	// Files sharing author and title are parts of one book: same folder.
 	first := upload("part1.m4b", []byte("first upload content"))
 	second := upload("part2.m4b", []byte("second upload content, different"))
+	// A colliding file name gets a " (2)" suffix instead of a new folder.
+	third := upload("part1.m4b", []byte("re-upload of part1"))
 
-	wantFirst := filepath.Join(libDir, "Same Author - Same Title")
-	wantSecond := filepath.Join(libDir, "Same Author - Same Title (2)")
-
-	if first.folder != wantFirst {
-		t.Fatalf("first folder = %q, want %q", first.folder, wantFirst)
+	want := filepath.Join(libDir, "Same Author - Same Title")
+	for i, got := range []string{first.folder, second.folder, third.folder} {
+		if got != want {
+			t.Fatalf("upload %d folder = %q, want %q", i+1, got, want)
+		}
 	}
-	if second.folder != wantSecond {
-		t.Fatalf("second folder = %q, want %q", second.folder, wantSecond)
-	}
-	if _, err := os.Stat(filepath.Join(first.folder, "part1.m4b")); err != nil {
-		t.Fatalf("first file missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(second.folder, "part2.m4b")); err != nil {
-		t.Fatalf("second file missing: %v", err)
+	for _, name := range []string{"part1.m4b", "part2.m4b", "part1 (2).m4b"} {
+		if _, err := os.Stat(filepath.Join(want, name)); err != nil {
+			t.Fatalf("file %s missing: %v", name, err)
+		}
 	}
 }
 

@@ -250,12 +250,14 @@ func (s *Service) handleComplete(event handler.HookEvent) {
 		folderName = filepath.Join("Uploads", base)
 	}
 
-	destDir := uniqueDir(filepath.Join(libPath, folderName))
+	// Files that share author and title belong to one book, so the folder is
+	// reused; only a colliding file name gets a " (2)" suffix.
+	destDir := filepath.Join(libPath, folderName)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		s.log.Error("upload: failed to create destination directory", "dir", destDir, "err", err)
 		return
 	}
-	destPath := filepath.Join(destDir, filename)
+	destPath := uniqueFile(filepath.Join(destDir, filename))
 
 	if err := moveFile(dataPath, destPath); err != nil {
 		s.log.Error("upload: failed to move file into library", "src", dataPath, "dst", destPath, "err", err)
@@ -287,16 +289,17 @@ func destFilename(info handler.FileInfo) string {
 	return name
 }
 
-// uniqueDir returns path, or if that directory already exists, path with
-// " (2)", " (3)", ... appended to its final component until a free name is
+// uniqueFile returns path, or if that file already exists, path with
+// " (2)", " (3)", ... inserted before the extension until a free name is
 // found.
-func uniqueDir(path string) string {
+func uniqueFile(path string) string {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return path
 	}
-	dir, base := filepath.Dir(path), filepath.Base(path)
+	ext := filepath.Ext(path)
+	stem := strings.TrimSuffix(path, ext)
 	for i := 2; ; i++ {
-		candidate := filepath.Join(dir, fmt.Sprintf("%s (%d)", base, i))
+		candidate := fmt.Sprintf("%s (%d)%s", stem, i, ext)
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			return candidate
 		}
