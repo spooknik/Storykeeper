@@ -49,6 +49,9 @@ type bookRow struct {
 	folderPath string
 	title      string
 	authors    string
+	narrators  string
+	series     string
+	seriesSeq  string
 	durationMs int64
 	updatedAt  int64
 	scanHash   string
@@ -56,7 +59,7 @@ type bookRow struct {
 
 func fetchBooks(t *testing.T, database *db.DB, libID int64) []bookRow {
 	t.Helper()
-	rows, err := database.Query(`SELECT id, folder_path, title, authors, duration_ms, updated_at, scan_hash FROM books WHERE library_id = ? ORDER BY title`, libID)
+	rows, err := database.Query(`SELECT id, folder_path, title, authors, narrators, series, series_seq, duration_ms, updated_at, scan_hash FROM books WHERE library_id = ? ORDER BY title`, libID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +67,46 @@ func fetchBooks(t *testing.T, database *db.DB, libID int64) []bookRow {
 	var out []bookRow
 	for rows.Next() {
 		var b bookRow
-		if err := rows.Scan(&b.id, &b.folderPath, &b.title, &b.authors, &b.durationMs, &b.updatedAt, &b.scanHash); err != nil {
+		if err := rows.Scan(&b.id, &b.folderPath, &b.title, &b.authors, &b.narrators, &b.series, &b.seriesSeq, &b.durationMs, &b.updatedAt, &b.scanHash); err != nil {
 			t.Fatal(err)
 		}
 		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func fetchBookByFolder(t *testing.T, database *db.DB, libID int64, folderPath string) (bookRow, bool) {
+	t.Helper()
+	for _, b := range fetchBooks(t, database, libID) {
+		if b.folderPath == folderPath {
+			return b, true
+		}
+	}
+	return bookRow{}, false
+}
+
+type chapterRowDB struct {
+	title          string
+	startMs, endMs int64
+}
+
+func fetchChapters(t *testing.T, database *db.DB, bookID int64) []chapterRowDB {
+	t.Helper()
+	rows, err := database.Query(`SELECT title, start_ms, end_ms FROM chapters WHERE book_id = ? ORDER BY idx`, bookID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []chapterRowDB
+	for rows.Next() {
+		var c chapterRowDB
+		if err := rows.Scan(&c.title, &c.startMs, &c.endMs); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
@@ -130,6 +169,33 @@ func TestScanLibraryIntegration(t *testing.T) {
 		"title": "Root Solo", "album": "Root Book", "artist": "Root Author",
 	})
 
+	// Book 4: an ABS-managed book with a metadata.json sidecar. The folder
+	// name carries a leading sequence number ("01 - Title") that should be
+	// stripped from the title (series is known, from the sidecar), with
+	// narrators and chapters coming entirely from the sidecar.
+	sidecarBookDir := filepath.Join(root, "SidecarAuthor", "Sidecar Series", "01 - Title")
+	genAudio(t, filepath.Join(sidecarBookDir, "track.mp3"), map[string]string{})
+	sidecarJSON := `{
+		"title": null,
+		"narrators": ["Jane Narrator"],
+		"series": ["Sidecar Series #1"],
+		"chapters": [
+			{"id": 0, "start": 0, "end": 1.0, "title": "Chapter 1"},
+			{"id": 1, "start": 1.0, "end": 2.0, "title": "Chapter 2"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(sidecarBookDir, "metadata.json"), []byte(sidecarJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Book 5: a book folder with direct audio plus a nested "Bonus"
+	// subfolder that isn't itself a book - both must land in one book
+	// under the shallowest-directory grouping rule.
+	genAudio(t, filepath.Join(root, "MergeAuthor", "Other", "main.mp3"), map[string]string{
+		"album": "Other Book", "artist": "Merge Author",
+	})
+	genAudio(t, filepath.Join(root, "MergeAuthor", "Other", "Bonus", "extra.mp3"), map[string]string{})
+
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
@@ -147,8 +213,8 @@ func TestScanLibraryIntegration(t *testing.T) {
 	}
 
 	books := fetchBooks(t, database, libID)
-	if len(books) != 3 {
-		t.Fatalf("expected 3 books, got %d: %+v", len(books), books)
+	if len(books) != 5 {
+		t.Fatalf("expected 5 books, got %d: %+v", len(books), books)
 	}
 
 	byTitle := map[string]bookRow{}
@@ -199,6 +265,50 @@ func TestScanLibraryIntegration(t *testing.T) {
 		t.Fatalf("Root Book files = %+v, want one entry with rel_path \"\"", rootFiles)
 	}
 
+	// Book 4: title/series/series_seq/narrators/chapters all resolved from
+	// folder-name convention + the metadata.json sidecar.
+	sidecarFolderPath := "SidecarAuthor/Sidecar Series/01 - Title"
+	sidecarBook, ok := fetchBookByFolder(t, database, libID, sidecarFolderPath)
+	if !ok {
+		t.Fatalf("missing sidecar book at folder_path %q, got: %+v", sidecarFolderPath, books)
+	}
+	if sidecarBook.title != "Title" {
+		t.Errorf("sidecar book title = %q, want %q", sidecarBook.title, "Title")
+	}
+	if sidecarBook.series != "Sidecar Series" {
+		t.Errorf("sidecar book series = %q, want %q", sidecarBook.series, "Sidecar Series")
+	}
+	if sidecarBook.seriesSeq != "1" {
+		t.Errorf("sidecar book series_seq = %q, want %q", sidecarBook.seriesSeq, "1")
+	}
+	if sidecarBook.narrators != `["Jane Narrator"]` {
+		t.Errorf("sidecar book narrators = %q, want %q", sidecarBook.narrators, `["Jane Narrator"]`)
+	}
+	sidecarChapters := fetchChapters(t, database, sidecarBook.id)
+	wantChapters := []chapterRowDB{
+		{title: "Chapter 1", startMs: 0, endMs: 1000},
+		{title: "Chapter 2", startMs: 1000, endMs: 2000},
+	}
+	if len(sidecarChapters) != len(wantChapters) {
+		t.Fatalf("sidecar book chapters = %+v, want %+v", sidecarChapters, wantChapters)
+	}
+	for i, c := range sidecarChapters {
+		if c != wantChapters[i] {
+			t.Errorf("sidecar book chapter %d = %+v, want %+v", i, c, wantChapters[i])
+		}
+	}
+
+	// Book 5: main.mp3 plus a nested Bonus/extra.mp3 must be one book.
+	mergeFolderPath := "MergeAuthor/Other"
+	mergeBook, ok := fetchBookByFolder(t, database, libID, mergeFolderPath)
+	if !ok {
+		t.Fatalf("missing merged book at folder_path %q, got: %+v", mergeFolderPath, books)
+	}
+	mergeFiles := fetchFiles(t, database, mergeBook.id)
+	if len(mergeFiles) != 2 {
+		t.Fatalf("merged book: expected 2 files, got %d: %+v", len(mergeFiles), mergeFiles)
+	}
+
 	// Rescan: nothing changed on disk, so scan_hash should cause every book
 	// to be skipped (no updated_at change).
 	before := map[int64]int64{}
@@ -209,8 +319,8 @@ func TestScanLibraryIntegration(t *testing.T) {
 		t.Fatalf("ScanLibrary (rescan): %v", err)
 	}
 	after := fetchBooks(t, database, libID)
-	if len(after) != 3 {
-		t.Fatalf("expected 3 books after rescan, got %d", len(after))
+	if len(after) != 5 {
+		t.Fatalf("expected 5 books after rescan, got %d", len(after))
 	}
 	for _, b := range after {
 		if b.updatedAt != before[b.id] {
@@ -226,8 +336,8 @@ func TestScanLibraryIntegration(t *testing.T) {
 		t.Fatalf("ScanLibrary (after delete): %v", err)
 	}
 	final := fetchBooks(t, database, libID)
-	if len(final) != 2 {
-		t.Fatalf("expected 2 books after removing BookTwo, got %d: %+v", len(final), final)
+	if len(final) != 4 {
+		t.Fatalf("expected 4 books after removing BookTwo, got %d: %+v", len(final), final)
 	}
 	for _, b := range final {
 		if b.title == "Book Two" {

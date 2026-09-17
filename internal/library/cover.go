@@ -18,13 +18,15 @@ var coverImageExts = map[string]bool{
 // extractCover finds cover art for a book: first any embedded image on the
 // files (in play order), then (for folder books only) cover.jpg/png/webp,
 // folder.jpg, or a single lone image file in the book folder. It returns
-// the raw bytes and a sniffed extension ("jpg"/"png"/"webp"), or nil bytes
-// if no cover was found.
-func extractCover(bookDirAbs string, files []*fileMeta, isSingleFile bool) ([]byte, string) {
+// the raw bytes, a sniffed extension ("jpg"/"png"/"webp"), and - only when
+// the cover came from a folder image file rather than embedded art - that
+// file's own name (used to fold it into the scan hash). Bytes are nil if
+// no cover was found.
+func extractCover(bookDirAbs string, files []*fileMeta, isSingleFile bool) (data []byte, ext string, coverFileName string) {
 	for _, f := range files {
 		img, err := taglib.ReadImage(f.absPath)
 		if err == nil && len(img) > 0 {
-			return img, sniffImageExt(img)
+			return img, sniffImageExt(img), ""
 		}
 	}
 
@@ -33,12 +35,37 @@ func extractCover(bookDirAbs string, files []*fileMeta, isSingleFile bool) ([]by
 		// "folder" is the shared library root/subdir it lives in, which
 		// may be shared with unrelated books), so we only trust embedded
 		// art for these.
-		return nil, ""
+		return nil, "", ""
+	}
+
+	pick := candidateCoverFolderFile(bookDirAbs, isSingleFile)
+	if pick == "" {
+		return nil, "", ""
+	}
+
+	fileData, err := os.ReadFile(filepath.Join(bookDirAbs, pick))
+	if err != nil {
+		return nil, "", ""
+	}
+	return fileData, sniffImageExt(fileData), pick
+}
+
+// candidateCoverFolderFile returns the name of the on-disk cover image
+// file that extractCover would fall back to for a folder book if no audio
+// file supplies embedded art: cover.jpg/png/webp, folder.jpg, or a single
+// lone image file. It does not read the file, so it's cheap enough to call
+// at scan-hash time (see gatherHashExtras): a changed cover.jpg then
+// invalidates the hash without needing a (comparatively expensive) tag
+// read first. An embedded-art change is already covered by its audio
+// file's own size/mtime, which is always part of the hash.
+func candidateCoverFolderFile(bookDirAbs string, isSingleFile bool) string {
+	if isSingleFile {
+		return ""
 	}
 
 	entries, err := os.ReadDir(bookDirAbs)
 	if err != nil {
-		return nil, ""
+		return ""
 	}
 
 	var named string
@@ -58,19 +85,13 @@ func extractCover(bookDirAbs string, files []*fileMeta, isSingleFile bool) ([]by
 		}
 	}
 
-	pick := named
-	if pick == "" && len(loneImages) == 1 {
-		pick = loneImages[0]
+	if named != "" {
+		return named
 	}
-	if pick == "" {
-		return nil, ""
+	if len(loneImages) == 1 {
+		return loneImages[0]
 	}
-
-	data, err := os.ReadFile(filepath.Join(bookDirAbs, pick))
-	if err != nil {
-		return nil, ""
-	}
-	return data, sniffImageExt(data)
+	return ""
 }
 
 func sniffImageExt(data []byte) string {

@@ -235,7 +235,9 @@ func (s *Scanner) processBookGroup(ctx context.Context, libID int64, libPath str
 		return statusSkipped, nil
 	}
 
-	hash := computeScanHash(stats)
+	bookDirAbs := filepath.Join(libPath, filepath.FromSlash(g.FolderPath))
+	extraForHash := gatherHashExtras(bookDirAbs, isSingleFile)
+	hash := computeScanHash(stats, extraForHash)
 
 	var existing *existingBook
 	{
@@ -293,12 +295,21 @@ func (s *Scanner) processBookGroup(ctx context.Context, libID int64, libPath str
 	}
 	meta.durationMs = durSum
 
-	bookDirAbs := filepath.Join(libPath, filepath.FromSlash(g.FolderPath))
-	coverData, coverExt := extractCover(bookDirAbs, stats, isSingleFile)
+	// ABS sidecar metadata overrides tag-derived values, and folder-name
+	// convention fills in whatever's still empty after that.
+	_, sidecarChapters := applySidecar(&meta, bookDirAbs, isSingleFile)
+	applyFolderConvention(&meta, g.FolderPath, isSingleFile)
+
+	coverData, coverExt, _ := extractCover(bookDirAbs, stats, isSingleFile)
 	meta.coverData = coverData
 	meta.coverExt = coverExt
 
-	chapters := buildChapters(ctx, stats, haveFFprobe)
+	var chapters []chapterRow
+	if len(sidecarChapters) > 0 {
+		chapters = sidecarChapters
+	} else {
+		chapters = buildChapters(ctx, stats, haveFFprobe)
+	}
 
 	if _, err := s.upsertBookAndChildren(ctx, libID, g.FolderPath, meta, stats, chapters, existing, hash); err != nil {
 		return statusSkipped, fmt.Errorf("upsert book: %w", err)

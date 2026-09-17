@@ -68,23 +68,52 @@ func TestGroupBooks(t *testing.T) {
 			},
 		},
 		{
-			name: "no rollup when parent also has direct audio",
+			name: "parent with direct audio absorbs subdir audio too (shallowest-dir rule)",
 			paths: []string{
 				"BookD/00-intro.mp3",
 				"BookD/CD1/01.mp3",
 			},
 			want: []bookGroup{
-				{FolderPath: "BookD", Files: []string{"00-intro.mp3"}},
-				{FolderPath: "BookD/CD1", Files: []string{"01.mp3"}},
+				{FolderPath: "BookD", Files: []string{"00-intro.mp3", "CD1/01.mp3"}},
 			},
 		},
 		{
-			name: "no rollup when subdir doesn't match cd pattern",
+			name: "no rollup when subdir doesn't match cd pattern and parent has no direct audio",
 			paths: []string{
 				"BookE/Bonus/extra.mp3",
 			},
 			want: []bookGroup{
 				{FolderPath: "BookE/Bonus", Files: []string{"extra.mp3"}},
+			},
+		},
+		{
+			name: "shallowest dir with direct audio absorbs a nested bonus subfolder",
+			paths: []string{
+				"Author/Title/a.mp3",
+				"Author/Title/Bonus/b.mp3",
+			},
+			want: []bookGroup{
+				{FolderPath: "Author/Title", Files: []string{"a.mp3", "Bonus/b.mp3"}},
+			},
+		},
+		{
+			name: "CD rollup two levels deep under Author/Title",
+			paths: []string{
+				"Author/Title/CD1/a.mp3",
+				"Author/Title/CD2/b.mp3",
+			},
+			want: []bookGroup{
+				{FolderPath: "Author/Title", Files: []string{"CD1/a.mp3", "CD2/b.mp3"}},
+			},
+		},
+		{
+			name: "Disc-pattern subdir merges with a sibling file when Title has direct audio",
+			paths: []string{
+				"Author/Title/Disc 1/a.mp3",
+				"Author/Title/extra.mp3",
+			},
+			want: []bookGroup{
+				{FolderPath: "Author/Title", Files: []string{"Disc 1/a.mp3", "extra.mp3"}},
 			},
 		},
 		{

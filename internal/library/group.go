@@ -27,49 +27,87 @@ type bookGroup struct {
 // into books.
 //
 // Rules (see docs on the package's scan behaviour):
-//   - A directory that directly contains audio files is a book; the book
-//     folder is that directory.
+//   - The book folder for a given audio file is the SHALLOWEST directory on
+//     its path (starting just below the library root) that directly
+//     contains at least one audio file. Every audio file anywhere beneath
+//     that directory - no matter how deeply nested - belongs to the same
+//     book, with its rel_path kept relative to the book folder (e.g.
+//     "Bonus/extra.mp3"). This keeps things like a book's bonus-material
+//     subfolder, or a "Disc 1"-style split alongside a stray extra file
+//     directly in the book folder, together as one book.
 //   - Exception: if a directory has no audio files of its own but has
 //     subdirectories matching cdPattern (CD1, Disc 2, ...) that themselves
-//     contain audio, the parent directory is a single book spanning those
-//     subdirs. This rollup is not applied when the parent would be the
-//     library root itself ("."), since a root-level book's folder_path is
-//     reserved for the single-file convention below.
+//     lead to audio, the parent directory is treated as if it directly
+//     contained audio, becoming a single book spanning those subdirs. This
+//     rollup is not applied when the parent would be the library root
+//     itself ("."), since a root-level book's folder_path is reserved for
+//     the single-file convention below.
 //   - An audio file sitting directly in the library root becomes its own
 //     single-file book, keyed by its own filename, with a lone "" entry in
-//     Files (meaning: the book folder path IS the file).
+//     Files (meaning: the book folder path IS the file). Root-level files
+//     are never merged with each other or with folder books.
 //
 // The returned slice and each group's Files are sorted deterministically
 // (book folders by string order, files by natural order) so callers get
 // stable results; final on-disk play order is decided later using tag data
 // where available.
 func groupBooks(relPaths []string) []bookGroup {
-	byDir := map[string][]string{}
+	directAudio := map[string][]string{} // dir -> audio files directly in dir
+	dirSet := map[string]bool{}          // every non-root ancestor dir of an audio file
+
 	for _, p := range relPaths {
 		d := path.Dir(p)
-		byDir[d] = append(byDir[d], p)
+		directAudio[d] = append(directAudio[d], p)
+		for cur := d; cur != "."; cur = path.Dir(cur) {
+			dirSet[cur] = true
+		}
 	}
 
-	// Directories eligible to be rolled into a CD/Disc/Part-spanning parent
-	// book: they match the pattern, and their parent has no direct audio
-	// files of its own and is not the library root.
-	rolledInto := map[string]string{}
-	for d := range byDir {
-		if d == "." {
-			continue
-		}
-		base := path.Base(d)
+	childDirs := map[string][]string{}
+	for d := range dirSet {
 		parent := path.Dir(d)
-		if parent == "." {
+		childDirs[parent] = append(childDirs[parent], d)
+	}
+
+	dirs := make([]string, 0, len(dirSet))
+	for d := range dirSet {
+		dirs = append(dirs, d)
+	}
+	// Process shallowest directories first so a shallower book root is
+	// discovered (and propagated to its descendants) before any deeper
+	// directory on the same path gets a chance to claim itself as a root.
+	sort.Slice(dirs, func(i, j int) bool {
+		di, dj := strings.Count(dirs[i], "/"), strings.Count(dirs[j], "/")
+		if di != dj {
+			return di < dj
+		}
+		return dirs[i] < dirs[j]
+	})
+
+	// owner[d] is the book-root directory that d's audio belongs to.
+	owner := map[string]string{}
+	for _, d := range dirs {
+		if parent := path.Dir(d); parent != "." {
+			if root, ok := owner[parent]; ok {
+				// An ancestor is already a book root; everything beneath it
+				// (this dir included) belongs to that same book.
+				owner[d] = root
+				continue
+			}
+		}
+		if len(directAudio[d]) > 0 {
+			owner[d] = d
 			continue
 		}
-		if !cdPattern.MatchString(base) {
-			continue
+		// CD/Disc/Part rollup: no audio of its own, but a subdir matching
+		// the pattern leads to audio, so this dir becomes the (virtual)
+		// book root for its children.
+		for _, child := range childDirs[d] {
+			if cdPattern.MatchString(path.Base(child)) {
+				owner[d] = d
+				break
+			}
 		}
-		if _, parentHasFiles := byDir[parent]; parentHasFiles {
-			continue
-		}
-		rolledInto[d] = parent
 	}
 
 	groups := map[string]*bookGroup{}
@@ -84,24 +122,22 @@ func groupBooks(relPaths []string) []bookGroup {
 		g.Files = append(g.Files, relToFolder)
 	}
 
-	for d, files := range byDir {
-		switch {
-		case d == ".":
+	for d, files := range directAudio {
+		if d == "." {
 			for _, f := range files {
 				addFile(f, "")
 			}
-		default:
-			if parent, ok := rolledInto[d]; ok {
-				for _, f := range files {
-					relToParent := strings.TrimPrefix(f, parent+"/")
-					addFile(parent, relToParent)
-				}
-				continue
-			}
-			for _, f := range files {
-				relToFolder := strings.TrimPrefix(f, d+"/")
-				addFile(d, relToFolder)
-			}
+			continue
+		}
+		root, ok := owner[d]
+		if !ok {
+			// Defensive: d has direct audio so the loop above always
+			// assigns an owner (itself, at minimum).
+			root = d
+		}
+		for _, f := range files {
+			relToFolder := strings.TrimPrefix(f, root+"/")
+			addFile(root, relToFolder)
 		}
 	}
 
