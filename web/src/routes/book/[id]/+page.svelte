@@ -6,12 +6,20 @@
 	import { auth } from '$lib/auth.svelte';
 	import { fmtDuration, fmtTime, joinNames } from '$lib/format';
 	import { player } from '$lib/player/machine.svelte';
+	import { reportFinished } from '$lib/player/reporter';
+	import { chaptersAreParts as titlesAreParts, chapterLabel } from '$lib/player/chapters';
+	import { bookmarks as bookmarkStore } from '$lib/player/bookmarks.svelte';
 	import { journal } from '$lib/player/journal';
 
 	let book = $state<BookDetail | null>(null);
 	let error = $state('');
+	let busy = $state(false);
+	/** Set optimistically while the progress write for this page is in flight. */
+	let finishedOverride = $state<boolean | null>(null);
+	let seenBookmarkVersion = 0;
 
 	const isCurrent = $derived(book !== null && player.book?.id === book.id);
+	const finished = $derived(finishedOverride ?? book?.progress?.finished ?? false);
 
 	/** Best known starting position: the newer of the server record and the local journal. */
 	function startPosition(b: BookDetail): number {
@@ -30,6 +38,7 @@
 	async function load() {
 		try {
 			book = await api.get<BookDetail>(`/api/v1/books/${page.params.id}`);
+			finishedOverride = null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load';
 		}
@@ -60,18 +69,72 @@
 		else void player.load(book, ms, true);
 	}
 
-	const shownPos = $derived(
-		isCurrent ? player.positionMs : (book ? startPosition(book) : 0)
-	);
+	const shownPos = $derived(isCurrent ? player.positionMs : book ? startPosition(book) : 0);
 
-	// Entries like "Disc 3", "Part 12", "Track 7" or "07" are file boundaries the
-	// scanner synthesised, not real chapters. Label them honestly and keep them
-	// out of the way unless asked for.
-	const genericTitle = /^(?:disc|disk|cd|part|track|chapter|file)?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$/i;
-	const chaptersAreParts = $derived(
-		book !== null && book.chapters.length > 0 && book.chapters.every((c) => genericTitle.test(c.title.trim()))
-	);
+	const partsOnly = $derived(book !== null && titlesAreParts(book.chapters));
+	const chapterHeading = $derived(book ? chapterLabel(book.chapters) : 'Chapters');
 	let showParts = $state(false);
+
+	// --- finished ---
+
+	async function toggleFinished() {
+		const b = book;
+		if (!b || busy) return;
+		const next = !finished;
+		busy = true;
+		error = '';
+		finishedOverride = next;
+		try {
+			if (isCurrent) {
+				// The engine moves the timeline and the reporter does the PUT.
+				player.markFinished(next);
+			} else {
+				// Un-finishing keeps whatever position the record already holds.
+				const pos = next ? b.duration_ms : (b.progress?.position_ms ?? shownPos);
+				await reportFinished(b.id, next, b.duration_ms, pos);
+				await load();
+			}
+		} catch (e) {
+			finishedOverride = null;
+			error = e instanceof Error ? e.message : 'Could not update this book.';
+		} finally {
+			busy = false;
+		}
+	}
+
+	// --- bookmarks ---
+
+	async function refreshBookmarks() {
+		const b = book;
+		if (!b) return;
+		try {
+			b.bookmarks = await bookmarkStore.list(b.id);
+		} catch {
+			/* leave the list as it is */
+		}
+	}
+
+	// The player can add a bookmark while this page is open; the store bumps a
+	// counter and we refetch so BookDetail.bookmarks stays the single source.
+	$effect(() => {
+		const v = bookmarkStore.version;
+		if (v === seenBookmarkVersion) return;
+		seenBookmarkVersion = v;
+		void refreshBookmarks();
+	});
+
+	async function removeBookmark(id: number) {
+		if (busy) return;
+		busy = true;
+		error = '';
+		try {
+			await bookmarkStore.remove(id);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not delete the bookmark.';
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <div class="page">
@@ -99,13 +162,16 @@
 					<button class="primary" onclick={play}>
 						{#if isCurrent && player.status === 'playing'}
 							Pause
-						{:else if shownPos > 0 && !(book.progress?.finished)}
+						{:else if shownPos > 0 && !finished}
 							Resume from {fmtTime(shownPos)}
 						{:else}
 							Play
 						{/if}
 					</button>
-					{#if book.progress?.finished}<span class="muted">Finished</span>{/if}
+					<button onclick={toggleFinished} disabled={busy}>
+						{finished ? 'Mark unfinished' : 'Mark finished'}
+					</button>
+					{#if finished}<span class="muted">Finished</span>{/if}
 				</div>
 			</div>
 		</div>
@@ -114,7 +180,31 @@
 			<p class="desc">{book.description}</p>
 		{/if}
 
-		{#if book.chapters.length > 0 && chaptersAreParts && !showParts}
+		<h2>Bookmarks</h2>
+		{#if book.bookmarks.length === 0}
+			<p class="muted">
+				No bookmarks yet. Use the Bookmark button in the player to save the spot you are at.
+			</p>
+		{:else}
+			<ul class="chapters">
+				{#each book.bookmarks as bm (bm.id)}
+					<li>
+						<button class="link" onclick={() => jump(bm.position_ms)}>
+							<span class="note">{bm.note || 'Bookmark'}</span>
+							<span class="muted">{fmtTime(bm.position_ms)}</span>
+						</button>
+						<button
+							class="del"
+							onclick={() => removeBookmark(bm.id)}
+							disabled={busy}
+							aria-label="Delete bookmark at {fmtTime(bm.position_ms)}">✕</button
+						>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		{#if book.chapters.length > 0 && partsOnly && !showParts}
 			<h2>Parts</h2>
 			<p class="muted">
 				This book has no chapter markers, only {book.chapters.length} audio parts of about
@@ -122,7 +212,7 @@
 				<button class="inline" onclick={() => (showParts = true)}>Show parts</button>
 			</p>
 		{:else if book.chapters.length > 0}
-			<h2>{chaptersAreParts ? 'Parts' : 'Chapters'}</h2>
+			<h2>{chapterHeading}</h2>
 			<ol class="chapters">
 				{#each book.chapters as c (c.index)}
 					<li class:active={isCurrent && player.currentChapter?.index === c.index}>
@@ -169,6 +259,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+		flex-wrap: wrap;
 	}
 	.desc {
 		white-space: pre-line;
@@ -183,6 +274,9 @@
 	}
 	.chapters li {
 		border-bottom: 1px solid var(--border);
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	.chapters li.active .link {
 		color: var(--accent);
@@ -202,6 +296,19 @@
 		border-radius: 0;
 		padding: 0.65rem 0.25rem;
 		text-align: left;
+	}
+	.note {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.del {
+		flex-shrink: 0;
+		background: none;
+		border: 0;
+		color: var(--fg-muted);
+		padding: 0.5rem 0.4rem;
 	}
 	@media (max-width: 520px) {
 		.head {

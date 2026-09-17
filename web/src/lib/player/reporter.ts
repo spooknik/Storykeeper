@@ -60,6 +60,9 @@ export class Reporter {
 			case 'ended':
 				void this.send(true);
 				break;
+			case 'finished':
+				void this.send(ev.finished);
+				break;
 			case 'tick':
 				if (Date.now() - this.lastSentAt >= HEARTBEAT_MS) void this.send();
 				break;
@@ -220,4 +223,32 @@ export class Reporter {
 			}
 		}
 	}
+}
+
+/**
+ * Mark a book finished (or not) when it is *not* the one loaded in the player,
+ * so there is no engine state to move. Same endpoint and body shape the Reporter
+ * uses: client timestamps are "now" (this is a deliberate action, not a replayed
+ * listen) and base_seq is 0.
+ *
+ * `durationMs` is the book duration, used as the position when finishing.
+ * `positionMs` overrides it — pass the position to keep when un-finishing.
+ */
+export async function reportFinished(
+	bookId: number,
+	finished: boolean,
+	durationMs: number,
+	positionMs?: number
+): Promise<Progress> {
+	const now = Date.now();
+	const pos = positionMs ?? (finished ? durationMs : 0);
+	const body: ProgressReport = {
+		position_ms: Math.max(0, Math.round(pos)),
+		file_index: 0,
+		client_listened_at: now,
+		client_now: now,
+		base_seq: 0,
+		finished
+	};
+	return api.put<Progress>(`/api/v1/progress/${bookId}`, body);
 }

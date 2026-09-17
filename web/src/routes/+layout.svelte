@@ -8,6 +8,7 @@
 	import { Reporter } from '$lib/player/reporter';
 	import { events } from '$lib/events.svelte';
 	import Player from '$lib/components/Player.svelte';
+	import Nav from '$lib/components/Nav.svelte';
 
 	let { children } = $props();
 	let reporter: Reporter | null = null;
@@ -60,6 +61,9 @@
 {#if !auth.loaded}
 	<div class="page muted">Loading…</div>
 {:else}
+	{#if auth.user}
+		<Nav />
+	{/if}
 	{@render children()}
 	{#if auth.user}
 		<Player />

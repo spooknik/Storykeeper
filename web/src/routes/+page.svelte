@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { BookList, BookSummary } from '$lib/api/types';
-	import { auth } from '$lib/auth.svelte';
 	import { events } from '$lib/events.svelte';
 	import type { Progress } from '$lib/api/types';
 	import { fmtDuration, joinNames } from '$lib/format';
@@ -81,13 +80,6 @@
 {/snippet}
 
 <div class="page">
-	<div class="topbar">
-		<h1>Storykeeper</h1>
-		<div class="right">
-			<span class="muted small">{auth.user?.username}</span>
-			<button onclick={() => auth.logout()}>Sign out</button>
-		</div>
-	</div>
 
 	{#if error}<p class="error">{error}</p>{/if}
 
@@ -119,11 +111,6 @@
 	h2 {
 		font-size: 1.05rem;
 		margin: 1.25rem 0 0.75rem;
-	}
-	.right {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
 	}
 	.small {
 		font-size: 0.85rem;

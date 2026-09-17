@@ -115,3 +115,52 @@ export interface BookList {
 export interface ErrorResponse {
 	error: { code: string; message: string };
 }
+
+/** GET/POST /api/v1/users — a user plus the restricted library set they have explicit access to. */
+export interface UserWithLibraries extends User {
+	library_ids: number[];
+}
+
+/** GET /api/v1/sessions — a session flagged as the one that made the current request. */
+export interface SessionListItem extends Session {
+	current: boolean;
+}
+
+/** Body for PATCH /api/v1/users/{id}. */
+export interface UpdateUserRequest {
+	password?: string;
+	role?: Role;
+}
+
+/** Body for POST /api/v1/users. */
+export interface CreateUserRequest {
+	username: string;
+	password: string;
+	role: Role;
+}
+
+/** Body for PUT /api/v1/users/{id}/libraries. */
+export interface SetLibrariesRequest {
+	library_ids: number[];
+}
+
+/** Body for POST /api/v1/libraries. */
+export interface CreateLibraryRequest {
+	name: string;
+	path: string;
+}
+
+/** Body for PATCH /api/v1/books/{id} — admin metadata edit. Only present fields change. */
+export interface BookEditRequest {
+	title?: string;
+	subtitle?: string;
+	authors?: string[];
+	narrators?: string[];
+	series?: string;
+	series_seq?: string;
+	description?: string;
+	published_year?: number;
+	language?: string;
+	asin?: string;
+	isbn?: string;
+}

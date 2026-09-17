@@ -33,7 +33,8 @@ export type PlayerEventKind =
 	| 'tick'
 	| 'stall'
 	| 'hidden'
-	| 'visible';
+	| 'visible'
+	| 'finished';
 
 export interface PlayerEvent {
 	kind: PlayerEventKind;
@@ -41,9 +42,14 @@ export interface PlayerEvent {
 	positionMs: number;
 	fileIndex: number;
 	playing: boolean;
+	/** Only set on 'finished' and 'ended': the flag to persist on the progress record. */
+	finished?: boolean;
 }
 
 export const SKIP_MS = 30_000;
+/** Default sleep-timer fade-out. */
+export const FADE_MS = 5_000;
+const FADE_STEP_MS = 100;
 const JOURNAL_EVERY_MS = 5_000;
 const STALL_AFTER_MS = 4_000;
 const WATCHDOG_MS = 2_000;
@@ -77,6 +83,7 @@ export class PlayerEngine {
 	private hiddenAt = 0;
 	private listeners = new Set<(ev: PlayerEvent) => void>();
 	private installed = false;
+	private fadeTimer: ReturnType<typeof setInterval> | null = null;
 
 	readonly currentChapter = $derived.by(() => {
 		const b = this.book;
@@ -95,14 +102,15 @@ export class PlayerEngine {
 		return () => this.listeners.delete(cb);
 	}
 
-	private emit(kind: PlayerEventKind): void {
+	private emit(kind: PlayerEventKind, finished?: boolean): void {
 		if (!this.book) return;
 		const ev: PlayerEvent = {
 			kind,
 			bookId: this.book.id,
 			positionMs: this.positionMs,
 			fileIndex: this.fileIndex,
-			playing: this.status === 'playing'
+			playing: this.status === 'playing',
+			...(finished !== undefined ? { finished } : {})
 		};
 		for (const cb of this.listeners) cb(ev);
 	}
@@ -226,6 +234,9 @@ export class PlayerEngine {
 	async play(): Promise<void> {
 		const a = this.ensureAudio();
 		if (!this.book) return;
+		// A sleep-timer fade may be in flight; starting again cancels it and
+		// restores full volume. Synchronous, so the gesture chain is untouched.
+		this.cancelFade();
 		this.wantPlaying = true;
 		if (this.status === 'ended') {
 			this.seekTo(0);
@@ -319,6 +330,71 @@ export class PlayerEngine {
 		if (!cur) return;
 		const next = b.chapters[cur.index + 1];
 		if (next) this.seekTo(next.start_ms);
+	}
+
+	/**
+	 * Element volume, 0–1. iOS ignores writes to `volume` (the hardware buttons
+	 * own it), so the fade below degrades to a plain pause there.
+	 */
+	setVolume(v: number): void {
+		if (this.audio) this.audio.volume = Math.min(1, Math.max(0, v));
+	}
+
+	/** Stop any in-flight fade and put the volume back to 1. */
+	cancelFade(): void {
+		if (this.fadeTimer) {
+			clearInterval(this.fadeTimer);
+			this.fadeTimer = null;
+		}
+		this.setVolume(1);
+	}
+
+	/** Sleep timer: ramp the volume down over `overMs`, then pause and restore it. */
+	fadeOutAndPause(overMs = FADE_MS): void {
+		this.cancelFade();
+		if (!this.audio || this.status !== 'playing' || overMs <= 0) {
+			this.pause();
+			this.setVolume(1);
+			return;
+		}
+		const startedAt = Date.now();
+		this.fadeTimer = setInterval(() => {
+			const t = (Date.now() - startedAt) / overMs;
+			if (t >= 1 || this.status !== 'playing') {
+				this.cancelFade();
+				this.pause();
+				return;
+			}
+			this.setVolume(1 - t);
+		}, FADE_STEP_MS);
+	}
+
+	/**
+	 * Mark the loaded book finished or unfinished. Finishing parks the timeline
+	 * (and the element) at the end; unfinishing keeps the position. Either way the
+	 * flag reaches the server through the reporter's 'finished' event.
+	 */
+	markFinished(finished: boolean): void {
+		const b = this.book;
+		if (!b) return;
+		if (finished) {
+			this.cancelFade();
+			this.wantPlaying = false;
+			this.audio?.pause();
+			const last = Math.max(0, b.files.length - 1);
+			this.fileIndex = last;
+			const dur = b.files[last]?.duration_ms ?? 0;
+			this.setSrc(last, Math.max(0, dur - 500));
+			this.positionMs = this.durationMs;
+			// Set before the async `pause` event lands: its handler leaves 'ended' alone.
+			this.status = 'ended';
+			mediaSession.setPlaybackState('paused');
+			this.publishPosition();
+		} else if (this.status === 'ended') {
+			this.status = 'paused';
+		}
+		this.writeJournal(false);
+		this.emit('finished', finished);
 	}
 
 	/** Restore the persisted playback rate (call once at startup). */
