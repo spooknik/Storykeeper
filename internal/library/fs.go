@@ -1,0 +1,67 @@
+package library
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+var audioExts = map[string]bool{
+	".m4b":  true,
+	".m4a":  true,
+	".mp3":  true,
+	".ogg":  true,
+	".opus": true,
+	".flac": true,
+	".wav":  true,
+	".aac":  true,
+}
+
+func isAudioExt(name string) bool {
+	return audioExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// isHiddenOrIgnored reports whether a file/dir name should be skipped
+// entirely: dotfiles/dotdirs and Synology's @eaDir thumbnail cache.
+func isHiddenOrIgnored(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "@eaDir"
+}
+
+// walkAudioFiles walks root and returns every audio file found, as paths
+// relative to root using forward slashes. Hidden files/dirs and @eaDir are
+// skipped entirely.
+func walkAudioFiles(root string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		name := d.Name()
+		if p != root && isHiddenOrIgnored(name) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !isAudioExt(name) {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}

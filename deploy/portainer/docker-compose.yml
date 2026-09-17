@@ -1,0 +1,45 @@
+# Portainer stack for Storykeeper on TrueNAS SCALE.
+#
+# Portainer > Stacks > Add stack > Web editor, paste this file, fill in the
+# environment variables in the "Environment variables" panel (or "Load
+# variables from .env file" using deploy/portainer/stack.env), then Deploy.
+#
+# Nginx Proxy Manager terminates HTTPS and forwards to <truenas-ip>:8080.
+# See docs/PROXY.md for the proxy host settings.
+
+services:
+  storykeeper:
+    image: ghcr.io/spooknik/storykeeper:${SK_IMAGE_TAG:-latest}
+    container_name: storykeeper
+    restart: unless-stopped
+    ports:
+      # Only the reverse proxy needs to reach this. Bind to the LAN IP if you
+      # want to keep it off other interfaces, e.g. "192.168.1.10:8080:8080".
+      - "${SK_HTTP_PORT:-8080}:8080"
+    volumes:
+      # App state: SQLite database, cover cache, in-progress uploads.
+      - ${SK_DATA_PATH}:/data
+      # Your audiobook library. Uploads through the web UI are written here,
+      # so it must be writable by uid 1000 (the container user). Append :ro
+      # if you will never upload through the UI.
+      - ${SK_LIBRARY_PATH}:/library
+    environment:
+      SK_ADDR: ":8080"
+      SK_DATA_DIR: /data
+      SK_LIBRARY: /library
+      SK_ADMIN_USER: ${SK_ADMIN_USER:-admin}
+      SK_ADMIN_PASSWORD: ${SK_ADMIN_PASSWORD}
+      # HTTPS is terminated at Nginx Proxy Manager, so mark cookies Secure.
+      SK_SECURE_COOKIE: "true"
+      TZ: ${TZ:-Europe/Copenhagen}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,208 @@
+// Reports position to the server and reconciles with other devices.
+//
+// Rule (most recent listen wins): the server assigns listened_at from
+// client_now - client_listened_at, so device clocks never matter. We keep the
+// listened_at the server gave our last accepted write; any server record with a
+// newer listened_at from a different device is a listen we did not see.
+//
+// Cadence: every 15 s while playing, immediately on pause/seek/rate/file/ended,
+// a keepalive fetch when the page hides, a sendBeacon on pagehide, and a
+// reconcile fetch when the page becomes visible.
+
+import { api, ApiError } from '$lib/api/client';
+import type { Progress, ProgressReport } from '$lib/api/types';
+import { fmtTime } from '$lib/format';
+import { journal } from './journal';
+import type { PlayerEngine, PlayerEvent } from './machine.svelte';
+
+const HEARTBEAT_MS = 15_000;
+const ADOPT_THRESHOLD_MS = 2_000;
+
+export class Reporter {
+	private timer: ReturnType<typeof setInterval> | null = null;
+	private inflight = false;
+	private lastSentAt = 0;
+	private unsubscribe: (() => void) | null = null;
+
+	constructor(
+		private player: PlayerEngine,
+		private csrfToken: () => string,
+		private deviceId: () => string
+	) {}
+
+	start(): void {
+		if (this.unsubscribe) return;
+		this.unsubscribe = this.player.on((ev) => this.onEvent(ev));
+		this.timer = setInterval(() => {
+			if (this.player.status === 'playing' && Date.now() - this.lastSentAt >= HEARTBEAT_MS - 500) {
+				void this.send();
+			}
+		}, 5_000);
+	}
+
+	stop(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		if (this.timer) clearInterval(this.timer);
+		this.timer = null;
+	}
+
+	private onEvent(ev: PlayerEvent): void {
+		switch (ev.kind) {
+			case 'play':
+			case 'pause':
+			case 'seek':
+			case 'ratechange':
+			case 'filechange':
+			case 'stall':
+				void this.send();
+				break;
+			case 'ended':
+				void this.send(true);
+				break;
+			case 'tick':
+				if (Date.now() - this.lastSentAt >= HEARTBEAT_MS) void this.send();
+				break;
+			case 'hidden':
+				this.sendOnHide();
+				break;
+			case 'visible':
+				void this.reconcile();
+				break;
+			case 'load':
+				break;
+		}
+	}
+
+	private report(finished?: boolean): ProgressReport {
+		const now = Date.now();
+		return {
+			position_ms: Math.round(this.player.positionMs),
+			file_index: this.player.fileIndex,
+			client_listened_at: now,
+			client_now: now,
+			base_seq: this.player.serverSeq,
+			...(finished !== undefined ? { finished } : {})
+		};
+	}
+
+	/** Normal write. 409 means another device listened more recently. */
+	async send(finished?: boolean): Promise<void> {
+		const book = this.player.book;
+		if (!book || this.inflight) return;
+		this.inflight = true;
+		this.lastSentAt = Date.now();
+		try {
+			const res = await api.put<Progress>(`/api/v1/progress/${book.id}`, this.report(finished));
+			this.accept(res);
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 409) {
+				const server = e.body as Progress;
+				this.maybeAdopt(server, 'conflict');
+			} else if (e instanceof ApiError && (e.status === 501 || e.status === 404)) {
+				// Endpoint not built yet (phase 0) or book vanished: journal only.
+			} else {
+				this.player.writeJournal(false);
+			}
+		} finally {
+			this.inflight = false;
+		}
+	}
+
+	private accept(res: Progress): void {
+		this.player.serverSeq = res.seq;
+		this.player.serverListenedAt = res.listened_at;
+		this.player.writeJournal(true);
+	}
+
+	/** Page is hiding: a keepalive fetch survives the page being frozen. */
+	private sendOnHide(): void {
+		const book = this.player.book;
+		if (!book) return;
+		const body: ProgressReport = { ...this.report(), csrf_token: this.csrfToken() };
+		let sent = false;
+		if (typeof navigator.sendBeacon === 'function') {
+			try {
+				sent = navigator.sendBeacon(
+					`/api/v1/progress/${book.id}/beacon`,
+					new Blob([JSON.stringify(body)], { type: 'application/json' })
+				);
+			} catch {
+				sent = false;
+			}
+		}
+		if (!sent) {
+			void api.put(`/api/v1/progress/${book.id}`, this.report(), { keepalive: true }).catch(() => {});
+		}
+	}
+
+	/**
+	 * Page became visible (or the app launched). Decide whether another device
+	 * moved the position while we were away.
+	 */
+	async reconcile(): Promise<void> {
+		const book = this.player.book;
+		if (!book) return;
+		let server: Progress;
+		try {
+			server = await api.get<Progress>(`/api/v1/progress/${book.id}`);
+		} catch {
+			return; // offline, 404, or not built yet
+		}
+		if (this.player.status === 'playing') {
+			// We kept playing in the background: ours is the most recent listen.
+			void this.send();
+			return;
+		}
+		this.maybeAdopt(server, 'visible');
+	}
+
+	private maybeAdopt(server: Progress, reason: 'conflict' | 'visible'): void {
+		if (server.device_id === this.deviceId()) {
+			this.accept(server);
+			return;
+		}
+		const newer = server.listened_at > this.player.serverListenedAt + ADOPT_THRESHOLD_MS;
+		if (!newer && reason === 'visible') return;
+		const local = Math.round(this.player.positionMs);
+		if (Math.abs(server.position_ms - local) < ADOPT_THRESHOLD_MS) {
+			this.accept(server);
+			return;
+		}
+		this.player.seekTo(server.position_ms);
+		this.player.serverSeq = server.seq;
+		this.player.serverListenedAt = server.listened_at;
+		this.player.writeJournal(true);
+		const from = server.device_name || 'another device';
+		this.player.notice = {
+			text: `Resumed from ${from} at ${fmtTime(server.position_ms)}`,
+			undo: () => {
+				this.player.notice = null;
+				this.player.seekTo(local);
+				void this.send();
+			}
+		};
+	}
+
+	/** Push journal entries the server never accepted (device was offline). */
+	async flushUnsynced(userId: number): Promise<void> {
+		for (const e of journal.unsynced(userId)) {
+			try {
+				const now = Date.now();
+				const res = await api.put<Progress>(`/api/v1/progress/${e.bookId}`, {
+					position_ms: e.positionMs,
+					file_index: e.fileIndex,
+					client_listened_at: e.clientTs,
+					client_now: now,
+					base_seq: e.serverSeq
+				} satisfies ProgressReport);
+				journal.write(userId, { ...e, synced: true, serverSeq: res.seq, serverListenedAt: res.listened_at });
+			} catch (err) {
+				if (err instanceof ApiError && err.status === 409) {
+					// Someone listened after us: their record stands. Mark synced so we stop retrying.
+					journal.write(userId, { ...e, synced: true });
+				}
+			}
+		}
+	}
+}

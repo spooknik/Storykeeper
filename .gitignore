@@ -1,0 +1,21 @@
+# build
+/storykeeper
+/storykeeper.exe
+/dist/
+/web/build/
+/web/.svelte-kit/
+/web/node_modules/
+# runtime data
+/data/
+/library/
+*.db
+*.db-wal
+*.db-shm
+# agent scratch
+/.frugal-fable/
+# env
+.env
+.env.*
+!.env.example
+/.claude/
+!/web/build/.gitkeep

@@ -1,0 +1,21 @@
+services:
+  storykeeper:
+    build: .
+    image: storykeeper:local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      # Mounted read-only by default because the primary use case is
+      # pointing at an existing audiobook library you don't want touched.
+      # If you plan to upload books through the web UI, drop the `:ro`
+      # suffix below so Storykeeper can write into this volume.
+      - ${LIBRARY_PATH:-./library}:/library:ro
+    environment:
+      - SK_ADDR=${SK_ADDR:-:8080}
+      - SK_DATA_DIR=${SK_DATA_DIR:-/data}
+      - SK_LIBRARY=${SK_LIBRARY:-/library}
+      - SK_ADMIN_USER=${SK_ADMIN_USER:-}
+      - SK_ADMIN_PASSWORD=${SK_ADMIN_PASSWORD:-}
+      - SK_SECURE_COOKIE=${SK_SECURE_COOKIE:-false}
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+# VCS / editor
+.git
+.gitattributes
+.claude
+.frugal-fable
+
+# Node / SvelteKit
+web/node_modules
+web/build
+web/.svelte-kit
+
+# Go build output
+storykeeper
+storykeeper.exe
+dist
+
+# runtime data (bind-mounted, never baked into the image)
+data
+library
+
+# local env / secrets
+.env
+.env.*
+!.env.example
+
+# databases
+*.db
+*.db-wal
+*.db-shm
