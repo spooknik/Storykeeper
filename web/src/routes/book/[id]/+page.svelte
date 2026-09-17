@@ -234,7 +234,12 @@
 				<button class="inline" onclick={() => (showParts = true)}>Show parts</button>
 			</p>
 		{:else if book.chapters.length > 0}
-			<h2>{chapterHeading}</h2>
+			<h2 class="with-icon">
+				{chapterHeading}
+				{#if partsOnly}
+					<button class="inline" onclick={() => (showParts = false)}>Hide parts</button>
+				{/if}
+			</h2>
 			<ol class="chapters">
 				{#each book.chapters as c (c.index)}
 					<li class:active={isCurrent && player.currentChapter?.index === c.index}>

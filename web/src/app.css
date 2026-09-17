@@ -1,4 +1,6 @@
 :root {
+	/* Native controls (select popups, scrollbars, date pickers) follow the dark theme. */
+	color-scheme: dark;
 	--bg: #111111;
 	--bg-raised: #1c1c1c;
 	--bg-hover: #262626;
@@ -65,6 +67,11 @@ button.primary {
 	color: var(--accent-fg);
 	border-color: var(--accent);
 	font-weight: 600;
+}
+
+option {
+	background: var(--bg-raised);
+	color: var(--fg);
 }
 
 input,
