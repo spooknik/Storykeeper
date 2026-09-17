@@ -53,8 +53,11 @@ func (s *Server) getUploadService() (*upload.Service, error) {
 			BasePath: "/api/v1/upload/",
 		}, s.DB, func(ctx context.Context, libraryID int64, folder string) {
 			if s.Scanner != nil {
-				if err := s.Scanner.ScanLibrary(ctx, libraryID); err != nil {
-					s.Log.Error("upload: post-upload scan failed", "library_id", libraryID, "folder", folder, "err", err)
+				if err := s.Scanner.ScanPath(ctx, libraryID, folder); err != nil {
+					s.Log.Warn("upload: targeted post-upload scan failed, falling back to full scan", "library_id", libraryID, "folder", folder, "err", err)
+					if err := s.Scanner.ScanLibrary(ctx, libraryID); err != nil {
+						s.Log.Error("upload: post-upload scan failed", "library_id", libraryID, "folder", folder, "err", err)
+					}
 				}
 			}
 			if s.Events != nil {
