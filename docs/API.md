@@ -15,8 +15,10 @@ and the TypeScript mirror in `web/src/lib/api/types.ts`; keep all three in sync.
   appropriate 4xx/5xx. `/media/*` never returns JSON; unauthenticated media requests
   get a bare `401` with no body and never a redirect.
 - **Roles**: `admin` or `user`. Admin-only routes return `403 forbidden` for users.
-- **Library visibility**: a library with no `library_access` rows is visible to all
-  users. With rows, only listed users (and admins) can see it or its books/media.
+- **Library visibility**: a library is visible to everyone unless its `restricted`
+  flag is set; a restricted library is visible only to admins and to users with a
+  `library_access` grant. Grants without the flag have no effect, and removing the
+  last grant never opens a restricted library.
 
 ## Auth
 
@@ -35,6 +37,7 @@ and the TypeScript mirror in `web/src/lib/api/types.ts`; keep all three in sync.
 | --- | --- | --- |
 | GET | `/libraries` | `[Library]`. `path` only present for admins |
 | POST | `/libraries` | admin. `{name, path}`. Path must be a directory on the server. `201 Library`, starts a scan |
+| PATCH | `/libraries/{id}` | admin. `{name?, restricted?}` → `Library`. `restricted=true` limits the library to users granted via `PUT /users/{id}/libraries`; `false` opens it to everyone regardless of grants |
 | DELETE | `/libraries/{id}` | admin. `204`. Cascades books, files, progress |
 | POST | `/libraries/{id}/scan` | admin. `202` |
 
