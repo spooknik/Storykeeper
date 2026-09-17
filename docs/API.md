@@ -42,7 +42,10 @@ and the TypeScript mirror in `web/src/lib/api/types.ts`; keep all three in sync.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/books` | `{items: [BookSummary], total}`. Query: `library`, `q` (title/authors/series/narrators), `sort` = `title` (default) / `added` / `recent`, `in_progress=1`, `limit` (≤500), `offset` |
+| GET | `/books` | `{items: [BookSummary], total}`. Query: `library`, `q` (title/authors/series/narrators), `sort` = `title` (default) / `author` / `series` / `added` / `recent` / `duration`, `dir` = `asc` (default) / `desc`, `author` / `series` / `narrator` (exact, case-insensitive), `in_progress=1`, `finished=1\|0`, `not_started=1`, `limit` (≤500), `offset`. `sort=series` orders by series name then numeric `series_seq`; `sort=author` uses the first author |
+| GET | `/authors` | `[Facet]` = `[{name, book_count}]`, distinct authors across visible books, sorted by name |
+| GET | `/series` | `[Facet]` distinct series across visible books |
+| GET | `/narrators` | `[Facet]` distinct narrators across visible books |
 | GET | `/books/{id}` | `BookDetail` |
 | PATCH | `/books/{id}` | admin. Metadata edit. *Wave A* |
 

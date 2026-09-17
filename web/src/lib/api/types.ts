@@ -164,3 +164,12 @@ export interface BookEditRequest {
 	asin?: string;
 	isbn?: string;
 }
+
+/** GET /api/v1/authors, /series, /narrators. */
+export interface Facet {
+	name: string;
+	book_count: number;
+}
+
+export type BookSort = 'title' | 'author' | 'series' | 'added' | 'recent' | 'duration';
+export type SortDir = 'asc' | 'desc';
