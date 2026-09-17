@@ -4,6 +4,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import type { Library } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { UploadQueue, type QueueItem, guessAuthorTitle, fmtBytes, fmtSpeed } from '$lib/upload/queue.svelte';
 
 	const queue = new UploadQueue();
@@ -93,7 +94,7 @@
 <div class="page">
 	<div class="topbar">
 		<h1>Upload audiobooks</h1>
-		<a href="/">← Library</a>
+		<a class="backlink" href="/"><Icon name="arrow-left" size={16} /> Library</a>
 	</div>
 
 	{#if error}<p class="error">{error}</p>{/if}
@@ -144,7 +145,9 @@
 
 			{#if formError}<div class="error">{formError}</div>{/if}
 
-			<button class="primary" type="submit">Add to upload queue</button>
+			<button class="primary with-icon" type="submit">
+				<Icon name="upload" size={16} /> Add to upload queue
+			</button>
 		</form>
 
 		<p class="muted note">
@@ -165,7 +168,8 @@
 
 		{#if queue.allDone}
 			<p class="done-banner">
-				Done. The library is being scanned; new books appear shortly. <a href="/">Go to library →</a>
+				Done. The library is being scanned; new books appear shortly.
+				<a class="with-icon" href="/">Go to library <Icon name="arrow-right" size={16} /></a>
 			</p>
 		{/if}
 
@@ -200,7 +204,9 @@
 							{:else if item.state === 'error'}
 								<button onclick={() => queue.retry(item)}>Retry</button>
 							{/if}
-							<button class="danger" onclick={() => queue.removeItem(item)}>Remove</button>
+							<button class="danger with-icon" onclick={() => queue.removeItem(item)}>
+								<Icon name="x" size={14} /> Remove
+							</button>
 						</div>
 					</div>
 				</li>

@@ -48,6 +48,19 @@ export function facetHref(kind: 'authors' | 'series' | 'narrators', name: string
 }
 
 /**
+ * Reads a facet name back out of a route parameter. A name that happens to hold a
+ * stray percent sign would make decodeURIComponent throw, so fall back to the raw value.
+ */
+export function decodeFacetName(raw: string | undefined): string {
+	if (!raw) return '';
+	try {
+		return decodeURIComponent(raw);
+	} catch {
+		return raw;
+	}
+}
+
+/**
  * Buckets books by first author or by series, keeping the order the server sent
  * inside each bucket except for series, which are put into reading order. The
  * catch-all bucket (No series / Unknown author) always sorts last.

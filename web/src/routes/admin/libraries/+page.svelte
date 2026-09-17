@@ -4,6 +4,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import type { Library } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let libraries = $state<Library[]>([]);
 	let loading = $state(true);
@@ -85,7 +86,7 @@
 <div class="page">
 	<div class="topbar">
 		<h1>Libraries</h1>
-		<a href="/admin">← Users</a>
+		<a class="backlink" href="/admin"><Icon name="arrow-left" size={16} /> Users</a>
 	</div>
 
 	{#if error}<p class="error">{error}</p>{/if}
@@ -113,9 +114,15 @@
 							<td>{lib.restricted ? 'Yes' : 'No'}</td>
 							<td>
 								<div class="row-actions">
-									<button onclick={() => rescan(lib.id)} disabled={rowBusy[lib.id]}>Rescan</button>
-									<button class="danger" onclick={() => removeLibrary(lib.id, lib.name)} disabled={rowBusy[lib.id]}>
-										Delete
+									<button class="with-icon" onclick={() => rescan(lib.id)} disabled={rowBusy[lib.id]}>
+										<Icon name="refresh-cw" size={15} /> Rescan
+									</button>
+									<button
+										class="danger with-icon"
+										onclick={() => removeLibrary(lib.id, lib.name)}
+										disabled={rowBusy[lib.id]}
+									>
+										<Icon name="trash-2" size={15} /> Delete
 									</button>
 								</div>
 							</td>
@@ -147,7 +154,10 @@
 				<input type="text" bind:value={newPath} placeholder="/library" required />
 			</label>
 			{#if createError}<div class="error">{createError}</div>{/if}
-			<button class="primary" type="submit" disabled={creating}>{creating ? 'Adding…' : 'Add library'}</button>
+			<button class="primary with-icon" type="submit" disabled={creating}>
+				<Icon name="plus" size={16} />
+				{creating ? 'Adding…' : 'Add library'}
+			</button>
 			<p class="muted note">
 				Path is on the server (or the container running Storykeeper), e.g. <code>/library</code>, not on this device.
 				Adding a library starts a scan immediately.

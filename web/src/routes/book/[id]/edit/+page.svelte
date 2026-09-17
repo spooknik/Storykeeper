@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -112,7 +113,7 @@
 </script>
 
 <div class="page">
-	<p><a href="/book/{bookId}">← Back</a></p>
+	<p><a class="backlink" href="/book/{bookId}"><Icon name="arrow-left" size={16} /> Back</a></p>
 	<div class="topbar">
 		<h1>Edit metadata</h1>
 	</div>

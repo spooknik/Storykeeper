@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from './Icon.svelte';
 
 	interface Props {
 		title: string;
@@ -20,7 +21,9 @@
 <div class="sheet" role="dialog" aria-modal="true" aria-label={title}>
 	<div class="head">
 		<h2>{title}</h2>
-		<button class="close" onclick={onclose} aria-label="Close">✕</button>
+		<button class="close icon-btn" onclick={onclose} aria-label="Close">
+			<Icon name="x" size={18} />
+		</button>
 	</div>
 	<div class="body">
 		{@render children()}
@@ -64,7 +67,9 @@
 		font-size: 0.95rem;
 	}
 	.close {
-		padding: 0.35rem 0.6rem;
+		min-width: 34px;
+		height: 34px;
+		padding: 0;
 	}
 	.body {
 		overflow-y: auto;

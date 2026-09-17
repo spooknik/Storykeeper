@@ -4,6 +4,7 @@
 	import { api, ApiError } from '$lib/api/client';
 	import type { Library, Role, UserWithLibraries } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let users = $state<UserWithLibraries[]>([]);
 	let libraries = $state<Library[]>([]);
@@ -146,7 +147,9 @@
 <div class="page">
 	<div class="topbar">
 		<h1>Admin</h1>
-		<a href="/admin/libraries">Manage libraries →</a>
+		<a class="with-icon" href="/admin/libraries">
+			<Icon name="library" size={16} /> Manage libraries
+		</a>
 	</div>
 
 	{#if error}<p class="error">{error}</p>{/if}
@@ -214,11 +217,11 @@
 							</td>
 							<td>
 								<button
-									class="danger"
+									class="danger with-icon"
 									onclick={() => removeUser(usr.id, usr.username)}
 									disabled={rowBusy[usr.id] || usr.id === auth.user?.id}
 								>
-									Delete
+									<Icon name="trash-2" size={15} /> Delete
 								</button>
 							</td>
 						</tr>
@@ -250,7 +253,10 @@
 				</select>
 			</label>
 			{#if createError}<div class="error">{createError}</div>{/if}
-			<button class="primary" type="submit" disabled={creating}>{creating ? 'Creating…' : 'Create user'}</button>
+			<button class="primary with-icon" type="submit" disabled={creating}>
+				<Icon name="plus" size={16} />
+				{creating ? 'Creating…' : 'Create user'}
+			</button>
 		</form>
 	{/if}
 </div>

@@ -5,6 +5,7 @@
 	import type { SessionListItem } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
 	import { player } from '$lib/player/machine.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let sessions = $state<SessionListItem[]>([]);
 	let loading = $state(true);
@@ -55,16 +56,18 @@
 	</div>
 
 	<section>
-		<h2>Account</h2>
+		<h2 class="with-icon"><Icon name="user" size={17} /> Account</h2>
 		<div class="account">
 			<div><span class="muted">Username</span> {auth.user?.username}</div>
 			<div><span class="muted">Role</span> {auth.user?.role}</div>
 		</div>
-		<button class="danger" onclick={signOut}>Sign out</button>
+		<button class="danger with-icon" onclick={signOut}>
+			<Icon name="log-out" size={16} /> Sign out
+		</button>
 	</section>
 
 	<section>
-		<h2>Playback speed</h2>
+		<h2 class="with-icon"><Icon name="gauge" size={17} /> Playback speed</h2>
 		<div class="rate-row">
 			<input
 				type="range"
@@ -80,7 +83,7 @@
 	</section>
 
 	<section>
-		<h2>Sessions</h2>
+		<h2 class="with-icon"><Icon name="users" size={17} /> Sessions</h2>
 		{#if error}<p class="error">{error}</p>{/if}
 		{#if loading}
 			<p class="muted">Loading…</p>
@@ -106,7 +109,9 @@
 								<td class="muted">{new Date(s.last_seen_at).toLocaleString()}</td>
 								<td>
 									{#if !s.current}
-										<button onclick={() => revoke(s.id)} disabled={revoking[s.id]}>Revoke</button>
+										<button class="with-icon" onclick={() => revoke(s.id)} disabled={revoking[s.id]}>
+											<Icon name="log-out" size={14} /> Revoke
+										</button>
 									{/if}
 								</td>
 							</tr>

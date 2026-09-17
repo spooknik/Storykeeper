@@ -164,3 +164,225 @@ select {
 	height: 100%;
 	background: var(--accent);
 }
+
+/* --- icons ------------------------------------------------------------- */
+
+svg.icon {
+	display: inline-block;
+	vertical-align: -0.15em;
+	flex-shrink: 0;
+}
+
+/* A button that is only an icon: square, quiet, and still a 40px tap target. */
+.icon-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 40px;
+	height: 40px;
+	padding: 0;
+	color: var(--fg-muted);
+}
+
+.icon-btn:hover {
+	color: var(--fg);
+}
+
+/* Label next to an icon inside a button, link or heading. */
+.with-icon,
+a.btn.with-icon {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+/* --- library toolbar --------------------------------------------------- */
+
+.toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 0.75rem;
+	margin-bottom: 1rem;
+}
+
+.searchbox {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	flex: 1 1 14rem;
+	min-width: 0;
+	max-width: 22rem;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0 0.3rem 0 0.6rem;
+	color: var(--fg-muted);
+}
+
+.searchbox input {
+	flex: 1;
+	min-width: 0;
+	background: none;
+	border: 0;
+	border-radius: 0;
+	padding: 0.5rem 0;
+	color: var(--fg);
+}
+
+.searchbox input:focus {
+	outline: none;
+}
+
+.searchbox .icon-btn {
+	min-width: 28px;
+	height: 28px;
+}
+
+.searchbox input::-webkit-search-cancel-button {
+	display: none;
+}
+
+.controls {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+}
+
+/* A select with a leading icon, drawn as one control. */
+.field {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding-left: 0.6rem;
+	color: var(--fg-muted);
+}
+
+.field select {
+	background: none;
+	border: 0;
+	border-radius: 0;
+	padding: 0.5rem 0.5rem 0.5rem 0;
+	color: var(--fg);
+	font-size: 0.88rem;
+}
+
+.chips {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	flex: 1 1 100%;
+	overflow-x: auto;
+	scrollbar-width: none;
+	padding-bottom: 0.15rem;
+}
+
+.chips::-webkit-scrollbar {
+	display: none;
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
+	flex-shrink: 0;
+	padding: 0.35rem 0.7rem;
+	border-radius: 999px;
+	font-size: 0.82rem;
+	color: var(--fg-muted);
+	white-space: nowrap;
+}
+
+.chip:hover {
+	color: var(--fg);
+}
+
+.chip.on {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--accent-fg);
+	font-weight: 600;
+}
+
+/* --- author / series / narrator pages ---------------------------------- */
+
+.facet-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.facet-list li {
+	border-bottom: 1px solid var(--border);
+}
+
+.facet-list a {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.7rem 0.25rem;
+	color: var(--fg);
+}
+
+.facet-list a .name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.facet-list a .count {
+	color: var(--fg-muted);
+	font-size: 0.8rem;
+	flex-shrink: 0;
+}
+
+.letter-head {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	margin: 1.25rem 0 0;
+	padding: 0.3rem 0.25rem;
+	font-size: 0.8rem;
+	letter-spacing: 0.08em;
+	color: var(--accent);
+	background: var(--bg);
+	border-bottom: 1px solid var(--border);
+}
+
+.letter-index {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.15rem;
+	margin: 0 0 0.75rem;
+	padding: 0;
+	list-style: none;
+}
+
+.letter-index a {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 1.8rem;
+	height: 1.8rem;
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	color: var(--fg-muted);
+	font-size: 0.78rem;
+}
+
+.letter-index a:hover {
+	color: var(--accent);
+}
+
+.backlink {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: 0.9rem;
+}

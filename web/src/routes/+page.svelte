@@ -1,29 +1,102 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { api } from '$lib/api/client';
 	import type { BookList, BookSummary } from '$lib/api/types';
 	import { events } from '$lib/events.svelte';
-	import type { Progress } from '$lib/api/types';
-	import { fmtDuration, joinNames } from '$lib/format';
+	import Icon from '$lib/components/Icon.svelte';
+	import type { IconName } from '$lib/components/Icon.svelte';
+	import BookCard from '$lib/library/BookCard.svelte';
+	import GroupSection from '$lib/library/GroupSection.svelte';
+	import { groupBooks } from '$lib/library/group';
+	import {
+		booksUrl,
+		defaultDir,
+		FILTERS,
+		GROUPS,
+		isPlainView,
+		parseQuery,
+		SORTS,
+		toSearch,
+		type FilterKey,
+		type GroupBy,
+		type LibraryQuery
+	} from '$lib/library/query';
+	import type { BookSort } from '$lib/api/types';
+
+	const FILTER_ICONS: Record<FilterKey, IconName> = {
+		all: 'layout-grid',
+		'in-progress': 'circle-dot',
+		'not-started': 'circle',
+		finished: 'check-circle'
+	};
 
 	let inProgress = $state<BookSummary[]>([]);
 	let books = $state<BookSummary[]>([]);
 	let total = $state(0);
-	let q = $state('');
 	let error = $state('');
 	let loading = $state(true);
 
-	async function load() {
+	const query = $derived(parseQuery(page.url));
+	const grouped = $derived(groupBooks(books, query.group));
+	const showShelf = $derived(isPlainView(query));
+
+	/** Local mirror of the search box so typing stays smooth while the URL catches up. */
+	let qInput = $state('');
+	let syncedQ = '';
+	let searchTimer: ReturnType<typeof setTimeout>;
+
+	$effect(() => {
+		const urlQ = query.q;
+		if (urlQ !== syncedQ) {
+			syncedQ = urlQ;
+			qInput = urlQ;
+		}
+	});
+
+	function update(patch: Partial<LibraryQuery>) {
+		const next: LibraryQuery = { ...query, ...patch };
+		void goto(`/${toSearch(next)}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	function onSearchInput() {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => {
+			syncedQ = qInput;
+			update({ q: qInput });
+		}, 250);
+	}
+
+	function clearSearch() {
+		clearTimeout(searchTimer);
+		qInput = '';
+		syncedQ = '';
+		update({ q: '' });
+	}
+
+	function onSort(e: Event) {
+		const sort = (e.currentTarget as HTMLSelectElement).value as BookSort;
+		update({ sort, dir: defaultDir(sort) });
+	}
+
+	function onGroup(e: Event) {
+		update({ group: (e.currentTarget as HTMLSelectElement).value as GroupBy });
+	}
+
+	async function load(q: LibraryQuery) {
 		loading = true;
 		error = '';
 		try {
-			const [recent, all] = await Promise.all([
-				api.get<BookList>('/api/v1/books?sort=recent&in_progress=1&limit=20'),
-				api.get<BookList>(`/api/v1/books?sort=title&limit=200&q=${encodeURIComponent(q)}`)
+			const wantShelf = isPlainView(q);
+			const [shelf, list] = await Promise.all([
+				wantShelf
+					? api.get<BookList>('/api/v1/books?sort=recent&dir=desc&in_progress=1&limit=20')
+					: Promise.resolve(null),
+				api.get<BookList>(booksUrl(q))
 			]);
-			inProgress = recent.items;
-			books = all.items;
-			total = all.total;
+			inProgress = shelf ? shelf.items : [];
+			books = list.items;
+			total = list.total;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load';
 		} finally {
@@ -31,94 +104,150 @@
 		}
 	}
 
-	onMount(load);
-
-	// Refetch when the server reports library or sync changes; live progress
-	// events update the bars without a refetch.
-	let seenLibraryVersion = events.libraryVersion;
-	let seenResync = events.resyncVersion;
+	// One fetch per distinct view. Live progress events update the bars in place;
+	// only a library change or a resync from the server forces a refetch.
+	let loadedKey = '';
 	$effect(() => {
-		if (events.libraryVersion !== seenLibraryVersion || events.resyncVersion !== seenResync) {
-			seenLibraryVersion = events.libraryVersion;
-			seenResync = events.resyncVersion;
-			void load();
-		}
+		const key = [
+			query.sort,
+			query.dir,
+			query.filter,
+			query.q.trim(),
+			events.libraryVersion,
+			events.resyncVersion
+		].join('|');
+		if (key === loadedKey) return;
+		loadedKey = key;
+		void load(query);
 	});
-
-	let searchTimer: ReturnType<typeof setTimeout>;
-	function onSearch() {
-		clearTimeout(searchTimer);
-		searchTimer = setTimeout(load, 250);
-	}
-
-	function liveProgress(b: BookSummary): Progress | undefined {
-		const live = events.progress[b.id];
-		if (live && (!b.progress || live.seq >= b.progress.seq)) return live;
-		return b.progress;
-	}
-
-	function pct(b: BookSummary): number {
-		const p = liveProgress(b);
-		if (!p || b.duration_ms === 0) return 0;
-		return Math.min(100, (p.position_ms / b.duration_ms) * 100);
-	}
 </script>
 
-{#snippet card(b: BookSummary)}
-	<a class="card" href="/book/{b.id}">
-		{#if b.cover_url}
-			<img class="cover" src={b.cover_url} alt="" loading="lazy" />
-		{:else}
-			<div class="cover placeholder">♪</div>
-		{/if}
-		<div class="title">{b.title}</div>
-		<div class="sub">{joinNames(b.authors) || fmtDuration(b.duration_ms)}</div>
-		{#if liveProgress(b) && !liveProgress(b)?.finished}
-			<div class="bar"><span style:width="{pct(b)}%"></span></div>
-		{/if}
-	</a>
-{/snippet}
-
 <div class="page">
+	<div class="topbar">
+		<h1>Library <span class="muted count">{total}</span></h1>
+	</div>
+
+	<div class="toolbar">
+		<div class="searchbox">
+			<Icon name="search" size={16} />
+			<input
+				type="search"
+				placeholder="Search titles, authors, series"
+				aria-label="Search the library"
+				bind:value={qInput}
+				oninput={onSearchInput}
+			/>
+			{#if qInput !== ''}
+				<button class="icon-btn clear" onclick={clearSearch} aria-label="Clear search">
+					<Icon name="x" size={16} />
+				</button>
+			{/if}
+		</div>
+
+		<div class="controls">
+			<div class="field">
+				<Icon name="arrow-up-down" size={16} />
+				<select value={query.sort} onchange={onSort} aria-label="Sort by">
+					{#each SORTS as s (s.value)}
+						<option value={s.value}>{s.label}</option>
+					{/each}
+				</select>
+			</div>
+			<button
+				class="icon-btn"
+				onclick={() => update({ dir: query.dir === 'asc' ? 'desc' : 'asc' })}
+				aria-label={query.dir === 'asc' ? 'Sorted ascending, switch to descending' : 'Sorted descending, switch to ascending'}
+			>
+				<Icon name={query.dir === 'asc' ? 'arrow-up' : 'arrow-down'} size={18} />
+			</button>
+			<div class="field">
+				<Icon name="layers" size={16} />
+				<select value={query.group} onchange={onGroup} aria-label="Group by">
+					{#each GROUPS as g (g.value)}
+						<option value={g.value}>{g.label}</option>
+					{/each}
+				</select>
+			</div>
+		</div>
+
+		<div class="chips" role="group" aria-label="Filter">
+			<Icon name="filter" size={16} class="chips-icon" />
+			{#each FILTERS as f (f.value)}
+				<button
+					class="chip"
+					class:on={query.filter === f.value}
+					aria-pressed={query.filter === f.value}
+					onclick={() => update({ filter: f.value })}
+				>
+					<Icon name={FILTER_ICONS[f.value]} size={14} />
+					{f.label}
+				</button>
+			{/each}
+		</div>
+	</div>
 
 	{#if error}<p class="error">{error}</p>{/if}
 
-	{#if inProgress.length > 0}
+	{#if showShelf && inProgress.length > 0}
 		<h2>Continue listening</h2>
 		<div class="grid">
-			{#each inProgress as b (b.id)}{@render card(b)}{/each}
+			{#each inProgress as b (b.id)}
+				<BookCard book={b} />
+			{/each}
 		</div>
 	{/if}
 
-	<div class="topbar library-head">
-		<h2>Library <span class="muted small">{total}</span></h2>
-		<input type="search" placeholder="Search" bind:value={q} oninput={onSearch} />
-	</div>
 	{#if loading && books.length === 0}
 		<p class="muted">Loading…</p>
 	{:else if books.length === 0}
 		<p class="muted">
-			No books yet. Add a library folder from the admin page, or wait for the scan to finish.
+			{#if query.q.trim() !== ''}
+				Nothing matches “{query.q}”.
+			{:else if query.filter !== 'all'}
+				No books in this filter yet.
+			{:else}
+				No books yet. Add a library folder from the admin page, or wait for the scan to finish.
+			{/if}
 		</p>
 	{:else}
-		<div class="grid">
-			{#each books as b (b.id)}{@render card(b)}{/each}
-		</div>
+		{#if showShelf && inProgress.length > 0}
+			<h2>All books</h2>
+		{/if}
+		{#if total > books.length}
+			<p class="muted note">
+				Showing the first {books.length} of {total} books. Narrow the view with search or a filter
+				to see the rest.
+			</p>
+		{/if}
+		{#if query.group === 'none'}
+			<div class="grid">
+				{#each books as b (b.id)}
+					<BookCard book={b} badge={query.sort === 'series' && b.series_seq ? b.series_seq : undefined} />
+				{/each}
+			</div>
+		{:else}
+			{#each grouped as g (g.key)}
+				<GroupSection group={g} badges={query.group === 'series'} />
+			{/each}
+		{/if}
 	{/if}
 </div>
 
 <style>
+	h1 .count {
+		font-size: 0.9rem;
+		font-weight: 400;
+	}
 	h2 {
 		font-size: 1.05rem;
-		margin: 1.25rem 0 0.75rem;
+		margin: 1.5rem 0 0.75rem;
 	}
-	.small {
+	.note {
 		font-size: 0.85rem;
+		margin: 0 0 0.75rem;
 	}
-	.library-head {
-		margin-top: 1rem;
-	}
-	.library-head input {
-		max-width: 14rem;
+	:global(.toolbar .chips-icon) {
+		color: var(--fg-muted);
+		flex-shrink: 0;
 	}
 </style>

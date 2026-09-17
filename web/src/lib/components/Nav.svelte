@@ -1,18 +1,52 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { auth } from '$lib/auth.svelte';
+	import Icon from './Icon.svelte';
+	import type { IconName } from './Icon.svelte';
+
+	interface Item {
+		href: string;
+		label: string;
+		icon: IconName;
+	}
+
+	const main: Item[] = [
+		{ href: '/', label: 'Library', icon: 'library' },
+		{ href: '/authors', label: 'Authors', icon: 'users' },
+		{ href: '/series', label: 'Series', icon: 'layers' },
+		{ href: '/narrators', label: 'Narrators', icon: 'mic' }
+	];
+
+	const adminItems: Item[] = [
+		{ href: '/upload', label: 'Upload', icon: 'upload' },
+		{ href: '/admin', label: 'Admin', icon: 'settings' }
+	];
+
+	const settings: Item = { href: '/settings', label: 'Settings', icon: 'user' };
 
 	const isActive = (href: string) =>
 		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
 </script>
 
+{#snippet link(item: Item)}
+	<a
+		class="link"
+		class:active={isActive(item.href)}
+		href={item.href}
+		aria-label={item.label}
+		aria-current={isActive(item.href) ? 'page' : undefined}
+	>
+		<Icon name={item.icon} size={18} />
+		<span class="label">{item.label}</span>
+	</a>
+{/snippet}
+
 <nav class="nav">
-	<a class="link" class:active={isActive('/')} href="/">Library</a>
+	{#each main as item (item.href)}{@render link(item)}{/each}
 	{#if auth.user?.role === 'admin'}
-		<a class="link" class:active={isActive('/upload')} href="/upload">Upload</a>
-		<a class="link" class:active={isActive('/admin')} href="/admin">Admin</a>
+		{#each adminItems as item (item.href)}{@render link(item)}{/each}
 	{/if}
-	<a class="link" class:active={isActive('/settings')} href="/settings">Settings</a>
+	{@render link(settings)}
 </nav>
 
 <style>
@@ -23,8 +57,15 @@
 		padding: 0.5rem 0.75rem;
 		border-bottom: 1px solid var(--border);
 		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.nav::-webkit-scrollbar {
+		display: none;
 	}
 	.link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		padding: 0.4rem 0.7rem;
 		border-radius: var(--radius);
 		color: var(--fg-muted);
@@ -41,14 +82,17 @@
 		color: var(--accent);
 		font-weight: 600;
 	}
-	@media (max-width: 420px) {
+	/* Phones get icons only; the accessible name stays on the link itself. */
+	@media (max-width: 560px) {
 		.nav {
 			gap: 0.1rem;
 			padding: 0.4rem 0.5rem;
 		}
 		.link {
-			padding: 0.35rem 0.5rem;
-			font-size: 0.82rem;
+			padding: 0.45rem 0.6rem;
+		}
+		.label {
+			display: none;
 		}
 	}
 </style>

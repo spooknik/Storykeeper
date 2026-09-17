@@ -4,7 +4,9 @@
 	import { api } from '$lib/api/client';
 	import type { BookDetail } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
-	import { fmtDuration, fmtTime, joinNames } from '$lib/format';
+	import { fmtDuration, fmtTime } from '$lib/format';
+	import Icon from '$lib/components/Icon.svelte';
+	import { facetHref } from '$lib/library/group';
 	import { player } from '$lib/player/machine.svelte';
 	import { reportFinished } from '$lib/player/reporter';
 	import { chaptersAreParts as titlesAreParts, chapterLabel } from '$lib/player/chapters';
@@ -124,42 +126,68 @@
 </script>
 
 <div class="page">
-	<p><a href="/">← Library</a></p>
+	<p><a class="backlink" href="/"><Icon name="arrow-left" size={16} /> Library</a></p>
 	{#if error}<p class="error">{error}</p>{/if}
 	{#if book}
 		<div class="head">
 			{#if book.cover_url}
 				<img class="cover big" src={book.cover_url} alt="" />
 			{:else}
-				<div class="cover big placeholder">♪</div>
+				<div class="cover big placeholder"><Icon name="music" size={48} /></div>
 			{/if}
 			<div class="info">
 				<h1>{book.title}</h1>
 				{#if book.subtitle}<div class="muted">{book.subtitle}</div>{/if}
-				{#if book.authors.length}<div>by {joinNames(book.authors)}</div>{/if}
-				{#if book.narrators.length}<div class="muted">read by {joinNames(book.narrators)}</div>{/if}
-				{#if book.series}<div class="muted">{book.series}{book.series_seq ? ` #${book.series_seq}` : ''}</div>{/if}
+				{#if book.authors.length}
+					<div class="credit">
+						<span class="muted">by</span>
+						{#each book.authors as a, i (a)}{#if i > 0}<span>,</span>{/if}<a
+								href={facetHref('authors', a)}>{a}</a
+							>{/each}
+					</div>
+				{/if}
+				{#if book.narrators.length}
+					<div class="credit muted">
+						<Icon name="mic" size={14} />
+						<span>read by</span>
+						{#each book.narrators as n, i (n)}{#if i > 0}<span>,</span>{/if}<a
+								href={facetHref('narrators', n)}>{n}</a
+							>{/each}
+					</div>
+				{/if}
+				{#if book.series}
+					<div class="credit muted">
+						<Icon name="layers" size={14} />
+						<a href={facetHref('series', book.series)}>{book.series}</a>
+						{#if book.series_seq}<span class="seq">#{book.series_seq}</span>{/if}
+					</div>
+				{/if}
 				<div class="muted">
 					{fmtDuration(book.duration_ms)}
 					{#if book.files.length > 1}· {book.files.length} files{/if}
 					{#if book.published_year}· {book.published_year}{/if}
 				</div>
 				<div class="actions">
-					<button class="primary" onclick={play}>
+					<button class="primary with-icon" onclick={play}>
 						{#if isCurrent && player.status === 'playing'}
-							Pause
+							<Icon name="pause" size={18} /> Pause
 						{:else if shownPos > 0 && !finished}
-							Resume from {fmtTime(shownPos)}
+							<Icon name="play" size={18} /> Resume from {fmtTime(shownPos)}
 						{:else}
-							Play
+							<Icon name="play" size={18} /> Play
 						{/if}
 					</button>
-					<button onclick={toggleFinished} disabled={busy}>
+					<button class="with-icon" onclick={toggleFinished} disabled={busy}>
+						<Icon name={finished ? 'rotate-ccw' : 'check'} size={16} />
 						{finished ? 'Mark unfinished' : 'Mark finished'}
 					</button>
-					{#if finished}<span class="muted">Finished</span>{/if}
+					{#if finished}
+						<span class="muted with-icon"><Icon name="check-circle" size={16} /> Finished</span>
+					{/if}
 					{#if auth.user?.role === 'admin'}
-						<a class="btn" href="/book/{book.id}/edit">Edit</a>
+						<a class="btn with-icon" href="/book/{book.id}/edit">
+							<Icon name="pencil" size={16} /> Edit
+						</a>
 					{/if}
 				</div>
 			</div>
@@ -179,15 +207,20 @@
 				{#each book.bookmarks as bm (bm.id)}
 					<li>
 						<button class="link" onclick={() => jump(bm.position_ms)}>
-							<span class="note">{bm.note || 'Bookmark'}</span>
+							<span class="note with-icon">
+								<Icon name="bookmark" size={14} />
+								{bm.note || 'Bookmark'}
+							</span>
 							<span class="muted">{fmtTime(bm.position_ms)}</span>
 						</button>
 						<button
-							class="del"
+							class="del icon-btn"
 							onclick={() => removeBookmark(bm.id)}
 							disabled={busy}
-							aria-label="Delete bookmark at {fmtTime(bm.position_ms)}">✕</button
+							aria-label="Delete bookmark at {fmtTime(bm.position_ms)}"
 						>
+							<Icon name="trash-2" size={16} />
+						</button>
 					</li>
 				{/each}
 			</ul>
@@ -250,6 +283,20 @@
 		gap: 0.75rem;
 		flex-wrap: wrap;
 	}
+	.credit {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+		font-size: 0.95rem;
+	}
+	.credit span + a {
+		margin-left: -0.15rem;
+	}
+	.seq {
+		color: var(--accent);
+		font-weight: 600;
+	}
 	.desc {
 		white-space: pre-line;
 		line-height: 1.45;
@@ -288,6 +335,9 @@
 	}
 	.note {
 		min-width: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

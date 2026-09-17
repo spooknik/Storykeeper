@@ -4,6 +4,7 @@
 	import { bookmarks } from '$lib/player/bookmarks.svelte';
 	import { sleepTimer, SLEEP_MINUTES, type SleepMode } from '$lib/player/sleep.svelte';
 	import { fmtTime } from '$lib/format';
+	import Icon from './Icon.svelte';
 	import Sheet from './Sheet.svelte';
 
 	const rates = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -82,7 +83,9 @@
 				{#if player.notice.undo}
 					<button onclick={player.notice.undo}>Undo</button>
 				{/if}
-				<button onclick={() => player.dismissNotice()} aria-label="Dismiss">✕</button>
+				<button class="icon-btn" onclick={() => player.dismissNotice()} aria-label="Dismiss">
+					<Icon name="x" size={16} />
+				</button>
 			</div>
 		{/if}
 		<input
@@ -110,22 +113,35 @@
 				</div>
 			</a>
 			<div class="controls">
-				<button onclick={() => player.skip(-SKIP_MS)} aria-label="Back 30 seconds">−30</button>
+				<button onclick={() => player.skip(-SKIP_MS)} aria-label="Back 30 seconds">
+					<Icon name="rewind-30" size={22} />
+				</button>
 				{#if player.needsGesture || player.status === 'suspended'}
 					<button class="primary big" onclick={() => player.play()}>Tap to resume</button>
 				{:else if player.status === 'playing'}
-					<button class="primary big" onclick={() => player.pause()} aria-label="Pause">❚❚</button>
+					<button class="primary big" onclick={() => player.pause()} aria-label="Pause">
+						<Icon name="pause" size={22} />
+					</button>
 				{:else if player.status === 'loading'}
-					<button class="primary big" disabled aria-label="Loading">…</button>
+					<button class="primary big" disabled aria-label="Loading">
+						<Icon name="more-horizontal" size={22} />
+					</button>
 				{:else}
-					<button class="primary big" onclick={() => player.play()} aria-label="Play">▶</button>
+					<button class="primary big" onclick={() => player.play()} aria-label="Play">
+						<Icon name="play" size={22} />
+					</button>
 				{/if}
-				<button onclick={() => player.skip(SKIP_MS)} aria-label="Forward 30 seconds">+30</button>
+				<button onclick={() => player.skip(SKIP_MS)} aria-label="Forward 30 seconds">
+					<Icon name="forward-30" size={22} />
+				</button>
 			</div>
 		</div>
 		<div class="tools">
 			{#if chapters.length > 0}
-				<button onclick={() => (sheet = 'chapters')} aria-haspopup="dialog">☰ {chaptersTitle}</button>
+				<button onclick={() => (sheet = 'chapters')} aria-haspopup="dialog">
+					<Icon name="list" size={15} />
+					{chaptersTitle}
+				</button>
 			{/if}
 			<button
 				class:armed={sleepTimer.armed}
@@ -133,9 +149,13 @@
 				aria-haspopup="dialog"
 				aria-label="Sleep timer"
 			>
-				☾ {sleepTimer.label}
+				<Icon name="moon" size={15} />
+				{sleepTimer.label}
 			</button>
-			<button onclick={addBookmark}>🔖 Bookmark</button>
+			<button onclick={addBookmark}>
+				<Icon name="bookmark" size={15} />
+				Bookmark
+			</button>
 			<select
 				value={player.rate}
 				onchange={(e) => player.setRate(Number((e.target as HTMLSelectElement).value))}
@@ -222,6 +242,11 @@
 	.notice button {
 		padding: 0.3rem 0.6rem;
 	}
+	.notice .icon-btn {
+		min-width: 32px;
+		height: 32px;
+		padding: 0;
+	}
 	.scrub {
 		width: 100%;
 		margin: 0;
@@ -288,7 +313,14 @@
 		flex-shrink: 0;
 	}
 	.controls button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		padding: 0.45rem 0.6rem;
+		color: var(--fg-muted);
+	}
+	.controls button.primary {
+		color: var(--accent-fg);
 	}
 	.big {
 		min-width: 48px;
@@ -312,6 +344,11 @@
 		font-size: 0.78rem;
 		padding: 0.3rem 0.55rem;
 		white-space: nowrap;
+	}
+	.tools button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 	}
 	.tools button.armed {
 		border-color: var(--accent);

@@ -7,13 +7,12 @@
 		group: BookGroup;
 		/** Show the series number as a badge on each cover. */
 		badges?: boolean;
-		/** Whether the section starts expanded. */
-		startOpen?: boolean;
 	}
 
-	let { group, badges = false, startOpen = true }: Props = $props();
+	let { group, badges = false }: Props = $props();
 
-	let open = $state(startOpen);
+	/** Sections open by default; collapsing is per instance and keyed by group name. */
+	let open = $state(true);
 	const bodyId = $derived(`group-${group.key.replace(/\W+/g, '-').toLowerCase()}`);
 </script>
 
