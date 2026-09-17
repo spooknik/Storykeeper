@@ -36,14 +36,18 @@ func isHiddenOrIgnored(name string) bool {
 // An unreadable directory below root (typically a permission problem) is
 // logged and skipped rather than failing the whole library; partial is then
 // true so the caller knows not to treat books under it as removed.
+//
+// A failure on root itself - including a root that does not exist, e.g. an
+// unmounted share - is always returned as an error. Reporting it as an empty
+// walk would let the caller conclude every book in the library is gone.
 func walkAudioFiles(root string) (out []string, partial bool, err error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			if p == root {
 				return err
+			}
+			if os.IsNotExist(err) {
+				return nil
 			}
 			slog.Warn("library scan: cannot read, skipping", "path", p, "err", err)
 			partial = true

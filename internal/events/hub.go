@@ -37,7 +37,8 @@ type record struct {
 }
 
 type subscriber struct {
-	ch chan []byte
+	ch        chan []byte
+	sessionID int64 // 0 when the stream has no session (tests, internal callers)
 }
 
 type userState struct {
@@ -110,8 +111,46 @@ func (h *Hub) Subscribers(userID int64) int {
 	return 0
 }
 
-// Serve streams events for userID until the request context is done.
-func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, userID int64) {
+// CloseSession terminates every live stream belonging to sessionID, so a
+// revoked session stops receiving events immediately instead of at its next
+// request. A zero id matches nothing: sessionless streams are never swept up
+// by a revocation.
+func (h *Hub) CloseSession(sessionID int64) {
+	if sessionID == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, us := range h.users {
+		for s := range us.subs {
+			if s.sessionID == sessionID {
+				delete(us.subs, s)
+				close(s.ch)
+			}
+		}
+	}
+}
+
+// CloseUser terminates every live stream belonging to userID, whatever session
+// it is on: used when a password change or an account deletion invalidates all
+// of that user's sessions at once.
+func (h *Hub) CloseUser(userID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	us, ok := h.users[userID]
+	if !ok {
+		return
+	}
+	for s := range us.subs {
+		delete(us.subs, s)
+		close(s.ch)
+	}
+}
+
+// Serve streams events for userID until the request context is done, the
+// stream falls too far behind, or the session is revoked. sessionID is the
+// session the stream belongs to; pass 0 when there is none.
+func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, userID, sessionID int64) {
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/event-stream; charset=utf-8")
 	hdr.Set("Cache-Control", "no-cache, no-transform")
@@ -135,7 +174,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, userID int64) {
 	}
 
 	lastID, hasLast := lastEventID(r)
-	sub, replay, resync := h.subscribe(userID, lastID, hasLast)
+	sub, replay, resync := h.subscribe(userID, sessionID, lastID, hasLast)
 	defer h.unsubscribe(userID, sub)
 
 	if resync {
@@ -165,7 +204,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, userID int64) {
 			return
 		case f, ok := <-sub.ch:
 			if !ok {
-				return // dropped for being too slow; the client will reconnect
+				// Dropped for being too slow (the client reconnects) or the
+				// session/user was revoked (the reconnect will be refused).
+				return
 			}
 			if !write(f) {
 				return
@@ -249,7 +290,7 @@ func fanout(us *userState, f []byte) {
 
 // subscribe registers a stream and decides its replay in one critical section,
 // so no event can slip between the replay snapshot and the live feed.
-func (h *Hub) subscribe(userID int64, lastID uint64, hasLast bool) (*subscriber, [][]byte, bool) {
+func (h *Hub) subscribe(userID, sessionID int64, lastID uint64, hasLast bool) (*subscriber, [][]byte, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -273,7 +314,7 @@ func (h *Hub) subscribe(userID int64, lastID uint64, hasLast bool) (*subscriber,
 		}
 	}
 
-	s := &subscriber{ch: make(chan []byte, subscriberBuffer)}
+	s := &subscriber{ch: make(chan []byte, subscriberBuffer), sessionID: sessionID}
 	us.subs[s] = struct{}{}
 	return s, replay, resync
 }

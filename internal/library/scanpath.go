@@ -39,6 +39,10 @@ func (s *Scanner) ScanPath(ctx context.Context, libraryID int64, absPath string)
 		return fmt.Errorf("load library %d: %w", libraryID, err)
 	}
 
+	if err := checkRoot(libraryID, libPath); err != nil {
+		return err
+	}
+
 	libRoot := filepath.Clean(libPath)
 	target := filepath.Clean(absPath)
 	if target != libRoot && !strings.HasPrefix(target, libRoot+string(filepath.Separator)) {

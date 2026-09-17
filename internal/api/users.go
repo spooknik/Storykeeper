@@ -118,6 +118,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	if req.Password != nil {
+		// Changing the password revoked every session of that user; drop their
+		// live event streams too.
+		s.closeUser(id)
+	}
 	u, err := s.fetchUser(r.Context(), id)
 	if err != nil {
 		s.Log.Error("fetch user", "err", err)
@@ -152,6 +157,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "delete failed")
 		return
 	}
+	s.closeUser(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -19,7 +19,8 @@ import (
 	"github.com/spooknik/storykeeper/internal/db"
 )
 
-// fakeProgressPublisher records everything the handlers fan out.
+// fakeProgressPublisher records everything the handlers fan out, including
+// the stream terminations they ask for.
 type fakeProgressPublisher struct {
 	mu     sync.Mutex
 	events []struct {
@@ -27,6 +28,8 @@ type fakeProgressPublisher struct {
 		name    string
 		payload any
 	}
+	closedSessions []int64
+	closedUsers    []int64
 }
 
 func (f *fakeProgressPublisher) Publish(userID int64, name string, payload any) {
@@ -40,6 +43,18 @@ func (f *fakeProgressPublisher) Publish(userID int64, name string, payload any) 
 }
 
 func (f *fakeProgressPublisher) Broadcast(string, any) {}
+
+func (f *fakeProgressPublisher) CloseSession(sessionID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closedSessions = append(f.closedSessions, sessionID)
+}
+
+func (f *fakeProgressPublisher) CloseUser(userID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closedUsers = append(f.closedUsers, userID)
+}
 
 func (f *fakeProgressPublisher) named(name string) int {
 	f.mu.Lock()

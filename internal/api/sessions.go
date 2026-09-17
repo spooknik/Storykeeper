@@ -46,5 +46,8 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "delete failed")
 		return
 	}
+	// A revoked session must stop receiving events immediately, not at its
+	// next request.
+	s.closeSession(id)
 	w.WriteHeader(http.StatusNoContent)
 }

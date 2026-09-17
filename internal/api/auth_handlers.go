@@ -85,6 +85,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	_, sess := auth.FromContext(r.Context())
 	if sess != nil {
 		_ = s.Auth.Logout(r.Context(), sess.ID)
+		// The session is gone; its event stream must go with it.
+		s.closeSession(sess.ID)
 	}
 	s.Auth.ClearCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)

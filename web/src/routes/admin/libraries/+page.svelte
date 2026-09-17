@@ -55,6 +55,23 @@
 		}
 	}
 
+	async function setRestricted(id: number, restricted: boolean) {
+		rowBusy[id] = true;
+		rowError[id] = '';
+		try {
+			const updated = await api.patch<Library>(`/api/v1/libraries/${id}`, { restricted });
+			libraries = libraries.map((l) => (l.id === id ? { ...l, restricted: updated.restricted } : l));
+			rowMessage[id] = restricted
+				? 'Only users granted this library on the Users page can see it.'
+				: 'Visible to every user.';
+		} catch (e) {
+			rowError[id] = e instanceof ApiError ? e.message : 'Could not update the library.';
+			await load();
+		} finally {
+			rowBusy[id] = false;
+		}
+	}
+
 	async function rescan(id: number) {
 		rowError[id] = '';
 		rowMessage[id] = '';
@@ -111,7 +128,17 @@
 							<td>{lib.name}</td>
 							<td class="muted path">{lib.path}</td>
 							<td>{lib.book_count}</td>
-							<td>{lib.restricted ? 'Yes' : 'No'}</td>
+							<td>
+								<label class="toggle">
+									<input
+										type="checkbox"
+										checked={lib.restricted}
+										disabled={rowBusy[lib.id]}
+										onchange={(e) => setRestricted(lib.id, (e.target as HTMLInputElement).checked)}
+									/>
+									{lib.restricted ? 'Granted users only' : 'Everyone'}
+								</label>
+							</td>
 							<td>
 								<div class="row-actions">
 									<button class="with-icon" onclick={() => rescan(lib.id)} disabled={rowBusy[lib.id]}>
@@ -167,6 +194,13 @@
 </div>
 
 <style>
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		white-space: nowrap;
+	}
+
 	h2 {
 		font-size: 1.05rem;
 		margin: 1.75rem 0 0.75rem;

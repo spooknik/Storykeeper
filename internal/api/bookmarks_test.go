@@ -13,7 +13,9 @@ import (
 	"github.com/spooknik/storykeeper/internal/db"
 )
 
-// mustCreateLibrary inserts a library, optionally restricted to the given user IDs.
+// mustCreateLibrary inserts a library, optionally restricted to the given user
+// IDs: passing any user marks the library restricted (libraries.restricted = 1)
+// and grants those users access to it.
 func mustCreateLibrary(t *testing.T, s *Server, name string, restrictedTo ...int64) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -27,6 +29,11 @@ func mustCreateLibrary(t *testing.T, s *Server, name string, restrictedTo ...int
 		libID, err = res.LastInsertId()
 		if err != nil {
 			return err
+		}
+		if len(restrictedTo) > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE libraries SET restricted = 1 WHERE id = ?`, libID); err != nil {
+				return err
+			}
 		}
 		for _, uid := range restrictedTo {
 			if _, err := tx.ExecContext(ctx,

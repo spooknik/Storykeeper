@@ -33,6 +33,29 @@ import (
 
 var ErrNotImplemented = errors.New("library: not implemented")
 
+// ErrRootUnavailable is returned when a library's root is missing or is not a
+// directory (an unmounted share, a renamed folder). Scanning stops before it
+// touches the database: an empty walk would otherwise look exactly like "every
+// book was deleted" and take listening progress and bookmarks down with it.
+var ErrRootUnavailable = errors.New("library: root is unavailable")
+
+// checkRoot verifies that a library root is present and is a directory. It
+// logs and returns ErrRootUnavailable otherwise.
+func checkRoot(libraryID int64, root string) error {
+	st, err := os.Stat(root)
+	switch {
+	case err != nil:
+		slog.Error("library scan: root is unavailable, refusing to scan",
+			"library_id", libraryID, "path", root, "err", err)
+		return fmt.Errorf("library %d root %q: %w: %v", libraryID, root, ErrRootUnavailable, err)
+	case !st.IsDir():
+		slog.Error("library scan: root is not a directory, refusing to scan",
+			"library_id", libraryID, "path", root)
+		return fmt.Errorf("library %d root %q: %w: not a directory", libraryID, root, ErrRootUnavailable)
+	}
+	return nil
+}
+
 type Scanner struct {
 	DB      *db.DB
 	DataDir string // covers are written under DataDir/covers
@@ -109,6 +132,12 @@ func (s *Scanner) scanOnce(ctx context.Context, libraryID int64) error {
 			return nil
 		}
 		return fmt.Errorf("load library %d: %w", libraryID, err)
+	}
+
+	// Confirm the root is really there before anything else: a scan that walks
+	// nothing would go on to remove every book in the library.
+	if err := checkRoot(libraryID, libPath); err != nil {
+		return err
 	}
 
 	relPaths, partial, err := walkAudioFiles(libPath)

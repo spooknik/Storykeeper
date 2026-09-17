@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /api/v1/libraries", user(s.listLibraries))
 	mux.Handle("POST /api/v1/libraries", admin(s.createLibrary))
+	mux.Handle("PATCH /api/v1/libraries/{id}", admin(s.updateLibrary))
 	mux.Handle("DELETE /api/v1/libraries/{id}", admin(s.deleteLibrary))
 	mux.Handle("POST /api/v1/libraries/{id}/scan", admin(s.scanLibrary))
 

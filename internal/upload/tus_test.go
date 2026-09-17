@@ -363,3 +363,89 @@ func TestCreateRefusedWhenLibraryNotWritable(t *testing.T) {
 		t.Fatal("probe should fail when the library path is not a directory")
 	}
 }
+
+// TestUploadLifecycle_BlankAuthor_SharesTitleFolder: a multi-file book whose
+// files carry a title but no author must still land in ONE folder, named
+// after the title, instead of being split into per-file Uploads/<name> folders.
+func TestUploadLifecycle_BlankAuthor_SharesTitleFolder(t *testing.T) {
+	ts, libID, libDir, doneCh := testServer(t)
+
+	upload := func(filename string, content []byte) completion {
+		createResp := createUpload(t, ts, len(content), map[string]string{
+			"filename":   filename,
+			"library_id": strconv.FormatInt(libID, 10),
+			"author":     "",
+			"title":      "Untitled Narrator Book",
+		})
+		defer createResp.Body.Close()
+		if createResp.StatusCode != http.StatusCreated {
+			t.Fatalf("create: got status %d", createResp.StatusCode)
+		}
+		p := patchChunk(t, createResp.Header.Get("Location"), 0, content)
+		p.Body.Close()
+		if p.StatusCode != http.StatusNoContent {
+			t.Fatalf("patch: got status %d", p.StatusCode)
+		}
+		return waitComplete(t, doneCh)
+	}
+
+	first := upload("part1.m4b", []byte("first part"))
+	second := upload("part2.m4b", []byte("second part, different"))
+
+	want := filepath.Join(libDir, "Untitled Narrator Book")
+	for i, got := range []string{first.folder, second.folder} {
+		if got != want {
+			t.Fatalf("upload %d folder = %q, want %q", i+1, got, want)
+		}
+	}
+	for _, name := range []string{"part1.m4b", "part2.m4b"} {
+		if _, err := os.Stat(filepath.Join(want, name)); err != nil {
+			t.Fatalf("file %s missing from the shared folder: %v", name, err)
+		}
+	}
+}
+
+// TestUploadLifecycle_BlankTitle_UsesAuthorFolder: with only an author, files
+// go under Author/<filename stem> rather than the generic Uploads/ tree.
+func TestUploadLifecycle_BlankTitle_UsesAuthorFolder(t *testing.T) {
+	ts, libID, libDir, doneCh := testServer(t)
+
+	content := []byte("only an author here")
+	createResp := createUpload(t, ts, len(content), map[string]string{
+		"filename":   "loose track.mp3",
+		"library_id": strconv.FormatInt(libID, 10),
+		"author":     "Lone Author",
+	})
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: got status %d", createResp.StatusCode)
+	}
+	p := patchChunk(t, createResp.Header.Get("Location"), 0, content)
+	p.Body.Close()
+
+	done := waitComplete(t, doneCh)
+	want := filepath.Join(libDir, "Lone Author", "loose track")
+	if done.folder != want {
+		t.Fatalf("dest folder = %q, want %q", done.folder, want)
+	}
+	if _, err := os.Stat(filepath.Join(done.folder, "loose track.mp3")); err != nil {
+		t.Fatalf("dest file missing: %v", err)
+	}
+}
+
+func TestDestFolder(t *testing.T) {
+	cases := []struct {
+		author, title, filename, want string
+	}{
+		{"Jane Doe", "My Book", "part1.m4b", "Jane Doe - My Book"},
+		{"", "My Book", "part1.m4b", "My Book"},
+		{"", "My Book", "part2.m4b", "My Book"}, // same folder, different file
+		{"Jane Doe", "", "loose track.mp3", filepath.Join("Jane Doe", "loose track")},
+		{"", "", "solo book.mp3", filepath.Join("Uploads", "solo book")},
+	}
+	for _, tc := range cases {
+		if got := destFolder(tc.author, tc.title, tc.filename); got != tc.want {
+			t.Errorf("destFolder(%q, %q, %q) = %q, want %q", tc.author, tc.title, tc.filename, got, tc.want)
+		}
+	}
+}

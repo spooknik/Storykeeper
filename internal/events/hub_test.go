@@ -30,12 +30,14 @@ type sseFrame struct {
 }
 
 // serveHub exposes the hub over a real HTTP server so the flushing and
-// streaming path is the one under test. The user is taken from ?uid=.
+// streaming path is the one under test. The user is taken from ?uid= and the
+// session from ?sid=.
 func serveHub(t *testing.T, h *Hub) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, _ := strconv.ParseInt(r.URL.Query().Get("uid"), 10, 64)
-		h.Serve(w, r, uid)
+		sid, _ := strconv.ParseInt(r.URL.Query().Get("sid"), 10, 64)
+		h.Serve(w, r, uid, sid)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -46,15 +48,23 @@ type stream struct {
 	resp   *http.Response
 	frames chan sseFrame
 	done   chan struct{}
+	ended  chan struct{} // closed when the server side of the stream ends
 	cancel context.CancelFunc
 	closed bool
 }
 
-// connect opens a stream for uid. header and query set Last-Event-ID via the
-// request header and the ?lastEventId= fallback respectively; "" omits them.
+// connect opens a stream for uid with no session id.
 func connect(t *testing.T, srv *httptest.Server, uid int64, header, query string) *stream {
 	t.Helper()
-	q := url.Values{"uid": {strconv.FormatInt(uid, 10)}}
+	return connectSession(t, srv, uid, 0, header, query)
+}
+
+// connectSession opens a stream for uid on session sid. header and query set
+// Last-Event-ID via the request header and the ?lastEventId= fallback
+// respectively; "" omits them.
+func connectSession(t *testing.T, srv *httptest.Server, uid, sid int64, header, query string) *stream {
+	t.Helper()
+	q := url.Values{"uid": {strconv.FormatInt(uid, 10)}, "sid": {strconv.FormatInt(sid, 10)}}
 	if query != "" {
 		q.Set("lastEventId", query)
 	}
@@ -84,9 +94,10 @@ func connect(t *testing.T, srv *httptest.Server, uid int64, header, query string
 	}
 
 	s := &stream{t: t, resp: resp, frames: make(chan sseFrame, 64),
-		done: make(chan struct{}), cancel: cancel}
+		done: make(chan struct{}), ended: make(chan struct{}), cancel: cancel}
 	br := bufio.NewReader(resp.Body)
 	go func() {
+		defer close(s.ended)
 		for {
 			f, err := readFrame(br)
 			if err != nil {
@@ -130,6 +141,26 @@ func (s *stream) next(d time.Duration) sseFrame {
 		s.t.Fatalf("timed out after %s waiting for a frame", d)
 	}
 	return sseFrame{}
+}
+
+// waitEnd fails unless the server ends the stream within d.
+func (s *stream) waitEnd(d time.Duration) {
+	s.t.Helper()
+	select {
+	case <-s.ended:
+	case <-time.After(d):
+		s.t.Fatalf("stream still open after %s, want it closed", d)
+	}
+}
+
+// expectAlive fails if the stream ends within d.
+func (s *stream) expectAlive(d time.Duration) {
+	s.t.Helper()
+	select {
+	case <-s.ended:
+		s.t.Fatal("stream ended, want it still open")
+	case <-time.After(d):
+	}
 }
 
 func (s *stream) expectNone(d time.Duration) {
@@ -352,4 +383,66 @@ func TestConcurrentPublishAndServe(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// TestCloseSessionEndsOnlyThatSession: revoking one session must terminate
+// exactly that session's stream and leave the user's other devices streaming.
+func TestCloseSessionEndsOnlyThatSession(t *testing.T) {
+	const uid = 3
+	h := New()
+	srv := serveHub(t, h)
+
+	a := connectSession(t, srv, uid, 101, "", "")
+	b := connectSession(t, srv, uid, 102, "", "")
+	waitSubs(t, h, uid, 2)
+
+	h.CloseSession(101)
+
+	a.waitEnd(2 * time.Second)
+	b.expectAlive(200 * time.Millisecond)
+	waitSubs(t, h, uid, 1)
+
+	// The surviving stream still receives events.
+	h.Publish(uid, "progress", progress{BookID: 9})
+	if f := b.next(2 * time.Second); f.event != "progress" {
+		t.Fatalf("event = %q, want progress", f.event)
+	}
+}
+
+// TestCloseUserEndsEverySession: a password change or account deletion must
+// disconnect every device of that user, and nobody else's.
+func TestCloseUserEndsEverySession(t *testing.T) {
+	h := New()
+	srv := serveHub(t, h)
+
+	a := connectSession(t, srv, 1, 201, "", "")
+	b := connectSession(t, srv, 1, 202, "", "")
+	other := connectSession(t, srv, 2, 203, "", "")
+	waitSubs(t, h, 1, 2)
+	waitSubs(t, h, 2, 1)
+
+	h.CloseUser(1)
+
+	a.waitEnd(2 * time.Second)
+	b.waitEnd(2 * time.Second)
+	other.expectAlive(200 * time.Millisecond)
+	waitSubs(t, h, 1, 0)
+	waitSubs(t, h, 2, 1)
+}
+
+// TestCloseSessionUnknownIDIsHarmless: closing an id nobody streams on (and
+// the zero id used by sessionless streams) must not disconnect anyone.
+func TestCloseSessionUnknownIDIsHarmless(t *testing.T) {
+	const uid = 4
+	h := New()
+	srv := serveHub(t, h)
+	s := connectSession(t, srv, uid, 301, "", "")
+	waitSubs(t, h, uid, 1)
+
+	h.CloseSession(999)
+	h.CloseSession(0)
+	h.CloseUser(uid + 1)
+
+	s.expectAlive(200 * time.Millisecond)
+	waitSubs(t, h, uid, 1)
 }

@@ -304,16 +304,10 @@ func (s *Service) handleComplete(event handler.HookEvent) {
 	author := sanitizeName(info.MetaData["author"])
 	title := sanitizeName(info.MetaData["title"])
 
-	var folderName string
-	if author != "" && title != "" {
-		folderName = author + " - " + title
-	} else {
-		base := strings.TrimSuffix(filename, filepath.Ext(filename))
-		folderName = filepath.Join("Uploads", base)
-	}
+	folderName := destFolder(author, title, filename)
 
-	// Files that share author and title belong to one book, so the folder is
-	// reused; only a colliding file name gets a " (2)" suffix.
+	// Files that share a destination folder belong to one book, so the folder
+	// is reused; only a colliding file name gets a " (2)" suffix.
 	destDir := filepath.Join(libPath, folderName)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		s.log.Error("upload: failed to create destination directory", "dir", destDir, "err", err)
@@ -335,6 +329,31 @@ func (s *Service) handleComplete(event handler.HookEvent) {
 
 	if s.onComplete != nil {
 		s.onComplete(ctx, libID, destDir)
+	}
+}
+
+// destFolder picks the library-relative folder a finished upload belongs in,
+// from its already-sanitized author and title metadata.
+//
+// The title is what identifies a book, so every file of one book must land in
+// the same folder whenever a title is given - a blank author only changes the
+// folder's name, it never splits a multi-file book into one folder per file:
+//
+//	author + title -> "Author - Title"
+//	title only     -> "Title"
+//	author only    -> "Author/<filename stem>"
+//	neither        -> "Uploads/<filename stem>"
+func destFolder(author, title, filename string) string {
+	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	switch {
+	case title != "" && author != "":
+		return author + " - " + title
+	case title != "":
+		return title
+	case author != "":
+		return filepath.Join(author, stem)
+	default:
+		return filepath.Join("Uploads", stem)
 	}
 }
 
