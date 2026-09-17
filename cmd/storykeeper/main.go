@@ -20,6 +20,7 @@ import (
 	"github.com/spooknik/storykeeper/internal/api"
 	"github.com/spooknik/storykeeper/internal/auth"
 	"github.com/spooknik/storykeeper/internal/db"
+	"github.com/spooknik/storykeeper/internal/events"
 	"github.com/spooknik/storykeeper/internal/library"
 	"github.com/spooknik/storykeeper/web"
 )
@@ -91,6 +92,7 @@ func run(log *slog.Logger, addr, dataDir, libraryPath string, secureCookie bool)
 	srv := &api.Server{
 		DB: database, Auth: authSvc, Scanner: scanner,
 		Cfg: api.Config{DataDir: dataDir}, Log: log, Web: webFS,
+		Events: events.New(),
 	}
 	httpSrv := &http.Server{
 		Addr:              addr,

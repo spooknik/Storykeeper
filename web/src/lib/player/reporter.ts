@@ -157,13 +157,28 @@ export class Reporter {
 		this.maybeAdopt(server, 'visible');
 	}
 
-	private maybeAdopt(server: Progress, reason: 'conflict' | 'visible'): void {
+	/**
+	 * Another device reported progress (arrived over the event stream). If it is
+	 * for the book we have loaded and we are not actively playing, move to it.
+	 */
+	onRemoteProgress(p: Progress): void {
+		const book = this.player.book;
+		if (!book || p.book_id !== book.id) return;
+		if (p.device_id === this.deviceId()) {
+			this.accept(p);
+			return;
+		}
+		if (this.player.status === 'playing') return; // ours is newer; the next heartbeat asserts it
+		this.maybeAdopt(p, 'remote');
+	}
+
+	private maybeAdopt(server: Progress, reason: 'conflict' | 'visible' | 'remote'): void {
 		if (server.device_id === this.deviceId()) {
 			this.accept(server);
 			return;
 		}
 		const newer = server.listened_at > this.player.serverListenedAt + ADOPT_THRESHOLD_MS;
-		if (!newer && reason === 'visible') return;
+		if (!newer && reason !== 'conflict') return;
 		const local = Math.round(this.player.positionMs);
 		if (Math.abs(server.position_ms - local) < ADOPT_THRESHOLD_MS) {
 			this.accept(server);

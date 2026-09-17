@@ -6,10 +6,12 @@
 	import { auth } from '$lib/auth.svelte';
 	import { player } from '$lib/player/machine.svelte';
 	import { Reporter } from '$lib/player/reporter';
+	import { events } from '$lib/events.svelte';
 	import Player from '$lib/components/Player.svelte';
 
 	let { children } = $props();
 	let reporter: Reporter | null = null;
+	let unsubEvents: (() => void) | null = null;
 
 	onMount(async () => {
 		player.install();
@@ -40,9 +42,16 @@
 			);
 			reporter.start();
 			void reporter.flushUnsynced(user.id);
+			unsubEvents?.();
+			const r = reporter;
+			unsubEvents = events.onProgress((p) => r.onRemoteProgress(p));
+			events.start();
 		} else {
 			reporter?.stop();
 			reporter = null;
+			unsubEvents?.();
+			unsubEvents = null;
+			events.stop();
 			player.userId = 0;
 		}
 	});

@@ -51,7 +51,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /api/v1/books", user(s.listBooks))
 	mux.Handle("GET /api/v1/books/{id}", user(s.getBook))
-	mux.Handle("PATCH /api/v1/books/{id}", admin(s.notImplemented))
+	mux.Handle("PATCH /api/v1/books/{id}", admin(s.updateBook))
 
 	mux.Handle("GET /media/books/{id}/files/{idx}", mediaRoute(s.serveBookFile))
 	mux.Handle("GET /media/books/{id}/cover", mediaRoute(s.serveBookCover))
@@ -61,18 +61,18 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/progress/{bookId}", user(s.notImplemented))
 	mux.Handle("PUT /api/v1/progress/{bookId}", user(s.notImplemented))
 	mux.Handle("POST /api/v1/progress/{bookId}/beacon", user(s.notImplemented))
-	mux.Handle("GET /api/v1/events", user(s.notImplemented))
+	mux.Handle("GET /api/v1/events", user(s.events))
 	mux.Handle("/api/v1/upload/", user(s.notImplemented))
-	mux.Handle("GET /api/v1/users", admin(s.notImplemented))
-	mux.Handle("POST /api/v1/users", admin(s.notImplemented))
-	mux.Handle("PATCH /api/v1/users/{id}", admin(s.notImplemented))
-	mux.Handle("DELETE /api/v1/users/{id}", admin(s.notImplemented))
-	mux.Handle("PUT /api/v1/users/{id}/libraries", admin(s.notImplemented))
-	mux.Handle("GET /api/v1/sessions", user(s.notImplemented))
-	mux.Handle("DELETE /api/v1/sessions/{id}", user(s.notImplemented))
-	mux.Handle("GET /api/v1/books/{id}/bookmarks", user(s.notImplemented))
-	mux.Handle("POST /api/v1/books/{id}/bookmarks", user(s.notImplemented))
-	mux.Handle("DELETE /api/v1/bookmarks/{id}", user(s.notImplemented))
+	mux.Handle("GET /api/v1/users", admin(s.listUsers))
+	mux.Handle("POST /api/v1/users", admin(s.createUser))
+	mux.Handle("PATCH /api/v1/users/{id}", admin(s.updateUser))
+	mux.Handle("DELETE /api/v1/users/{id}", admin(s.deleteUser))
+	mux.Handle("PUT /api/v1/users/{id}/libraries", admin(s.setUserLibraries))
+	mux.Handle("GET /api/v1/sessions", user(s.listSessions))
+	mux.Handle("DELETE /api/v1/sessions/{id}", user(s.deleteSession))
+	mux.Handle("GET /api/v1/books/{id}/bookmarks", user(s.listBookmarks))
+	mux.Handle("POST /api/v1/books/{id}/bookmarks", user(s.createBookmark))
+	mux.Handle("DELETE /api/v1/bookmarks/{id}", user(s.deleteBookmark))
 
 	// Anything else under /api is a 404 in JSON, not the SPA shell.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

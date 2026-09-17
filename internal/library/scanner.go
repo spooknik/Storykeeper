@@ -204,6 +204,7 @@ type existingBook struct {
 	isbn        string
 	description string
 	scanHash    string
+	locked      bool // metadata_locked: an admin edited it; the scanner keeps its hands off
 }
 
 // processBookGroup reconciles one book (as discovered by groupBooks) with
@@ -243,9 +244,9 @@ func (s *Scanner) processBookGroup(ctx context.Context, libID int64, libPath str
 	{
 		var eb existingBook
 		row := s.DB.QueryRowContext(ctx,
-			`SELECT id, added_at, asin, isbn, description, scan_hash FROM books WHERE library_id = ? AND folder_path = ?`,
+			`SELECT id, added_at, asin, isbn, description, scan_hash, metadata_locked FROM books WHERE library_id = ? AND folder_path = ?`,
 			libID, g.FolderPath)
-		switch err := row.Scan(&eb.id, &eb.addedAt, &eb.asin, &eb.isbn, &eb.description, &eb.scanHash); {
+		switch err := row.Scan(&eb.id, &eb.addedAt, &eb.asin, &eb.isbn, &eb.description, &eb.scanHash, &eb.locked); {
 		case err == nil:
 			existing = &eb
 		case errors.Is(err, sql.ErrNoRows):
@@ -371,18 +372,28 @@ func (s *Scanner) upsertBookAndChildren(ctx context.Context, libID int64, folder
 			}
 		}
 
-		_, err := tx.ExecContext(ctx, `
-			UPDATE books SET
-				title = ?, subtitle = ?, authors = ?, narrators = ?,
-				series = ?, series_seq = ?, description = ?, published_year = ?,
-				language = ?, duration_ms = ?, cover_path = ?, asin = ?, isbn = ?,
-				added_at = ?, updated_at = ?, scan_hash = ?
-			WHERE id = ?`,
-			meta.title, meta.subtitle, meta.authorsJSON, meta.narratorsJSON,
-			meta.series, meta.seriesSeq, description, meta.publishedYear,
-			meta.language, meta.durationMs, coverPath, asin, isbn,
-			addedAt, now, scanHash, bookID,
-		)
+		var err error
+		if existing != nil && existing.locked {
+			// Admin-edited metadata wins; only file-derived facts are refreshed.
+			_, err = tx.ExecContext(ctx, `
+				UPDATE books SET duration_ms = ?, cover_path = CASE WHEN ? = '' THEN cover_path ELSE ? END,
+					updated_at = ?, scan_hash = ?
+				WHERE id = ?`,
+				meta.durationMs, coverPath, coverPath, now, scanHash, bookID)
+		} else {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE books SET
+					title = ?, subtitle = ?, authors = ?, narrators = ?,
+					series = ?, series_seq = ?, description = ?, published_year = ?,
+					language = ?, duration_ms = ?, cover_path = ?, asin = ?, isbn = ?,
+					added_at = ?, updated_at = ?, scan_hash = ?
+				WHERE id = ?`,
+				meta.title, meta.subtitle, meta.authorsJSON, meta.narratorsJSON,
+				meta.series, meta.seriesSeq, description, meta.publishedYear,
+				meta.language, meta.durationMs, coverPath, asin, isbn,
+				addedAt, now, scanHash, bookID,
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("update book: %w", err)
 		}

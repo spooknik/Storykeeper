@@ -3,6 +3,8 @@
 	import { api } from '$lib/api/client';
 	import type { BookList, BookSummary } from '$lib/api/types';
 	import { auth } from '$lib/auth.svelte';
+	import { events } from '$lib/events.svelte';
+	import type { Progress } from '$lib/api/types';
 	import { fmtDuration, joinNames } from '$lib/format';
 
 	let inProgress = $state<BookSummary[]>([]);
@@ -32,15 +34,34 @@
 
 	onMount(load);
 
+	// Refetch when the server reports library or sync changes; live progress
+	// events update the bars without a refetch.
+	let seenLibraryVersion = events.libraryVersion;
+	let seenResync = events.resyncVersion;
+	$effect(() => {
+		if (events.libraryVersion !== seenLibraryVersion || events.resyncVersion !== seenResync) {
+			seenLibraryVersion = events.libraryVersion;
+			seenResync = events.resyncVersion;
+			void load();
+		}
+	});
+
 	let searchTimer: ReturnType<typeof setTimeout>;
 	function onSearch() {
 		clearTimeout(searchTimer);
 		searchTimer = setTimeout(load, 250);
 	}
 
+	function liveProgress(b: BookSummary): Progress | undefined {
+		const live = events.progress[b.id];
+		if (live && (!b.progress || live.seq >= b.progress.seq)) return live;
+		return b.progress;
+	}
+
 	function pct(b: BookSummary): number {
-		if (!b.progress || b.duration_ms === 0) return 0;
-		return Math.min(100, (b.progress.position_ms / b.duration_ms) * 100);
+		const p = liveProgress(b);
+		if (!p || b.duration_ms === 0) return 0;
+		return Math.min(100, (p.position_ms / b.duration_ms) * 100);
 	}
 </script>
 
@@ -53,7 +74,7 @@
 		{/if}
 		<div class="title">{b.title}</div>
 		<div class="sub">{joinNames(b.authors) || fmtDuration(b.duration_ms)}</div>
-		{#if b.progress && !b.progress.finished}
+		{#if liveProgress(b) && !liveProgress(b)?.finished}
 			<div class="bar"><span style:width="{pct(b)}%"></span></div>
 		{/if}
 	</a>

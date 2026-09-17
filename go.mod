@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/tus/tusd/v2 v2.10.1
 	go.senan.xyz/taglib v0.14.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
@@ -20,7 +21,9 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/tetratelabs/wazero v1.11.1-0.20260428013916-2bbd517b7633 // indirect
+	github.com/tus/lockfile v1.2.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
