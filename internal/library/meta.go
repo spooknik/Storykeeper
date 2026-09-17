@@ -21,7 +21,7 @@ import (
 // scanner logic changes in a way that could change derived metadata for
 // books whose on-disk files haven't changed, so a rescan re-reads and
 // re-derives everything instead of skipping on a stale hash.
-const scanFormatVersion = 2
+const scanFormatVersion = 3
 
 // fileMeta holds everything known about one audio file within a book while
 // it is being scanned.
