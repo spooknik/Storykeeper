@@ -1,7 +1,8 @@
 services:
   storykeeper:
-    build: .
-    image: storykeeper:local
+    # Pulls the published image. To build from source instead:
+    #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+    image: ghcr.io/spooknik/storykeeper:${SK_IMAGE_TAG:-latest}
     ports:
       - "8080:8080"
     volumes:

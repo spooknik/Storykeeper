@@ -26,7 +26,7 @@ test:
 
 # Build the container image locally.
 docker:
-	docker build -t storykeeper:local .
+	docker compose -f docker-compose.yml -f docker-compose.build.yml build
 
 # Remove local build artifacts.
 clean:
