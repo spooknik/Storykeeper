@@ -158,6 +158,9 @@
 						{finished ? 'Mark unfinished' : 'Mark finished'}
 					</button>
 					{#if finished}<span class="muted">Finished</span>{/if}
+					{#if auth.user?.role === 'admin'}
+						<a class="btn" href="/book/{book.id}/edit">Edit</a>
+					{/if}
 				</div>
 			</div>
 		</div>

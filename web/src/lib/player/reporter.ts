@@ -21,6 +21,8 @@ const ADOPT_THRESHOLD_MS = 2_000;
 export class Reporter {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private inflight = false;
+	/** A send requested while one was in flight; the newest position wins. */
+	private pending: { finished?: boolean } | null = null;
 	private lastSentAt = 0;
 	private unsubscribe: (() => void) | null = null;
 
@@ -92,7 +94,13 @@ export class Reporter {
 	/** Normal write. 409 means another device listened more recently. */
 	async send(finished?: boolean): Promise<void> {
 		const book = this.player.book;
-		if (!book || this.inflight) return;
+		if (!book) return;
+		if (this.inflight) {
+			// Never drop a report: the position may have moved since the one in
+			// flight was built. Coalesce into a single follow-up.
+			this.pending = { finished: finished ?? this.pending?.finished };
+			return;
+		}
 		this.inflight = true;
 		this.lastSentAt = Date.now();
 		try {
@@ -109,6 +117,11 @@ export class Reporter {
 			}
 		} finally {
 			this.inflight = false;
+			if (this.pending) {
+				const p = this.pending;
+				this.pending = null;
+				void this.send(p.finished);
+			}
 		}
 	}
 

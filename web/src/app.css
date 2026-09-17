@@ -49,6 +49,17 @@ button:disabled {
 	cursor: default;
 }
 
+/* A link styled as a button. */
+a.btn {
+	display: inline-block;
+	color: var(--fg);
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.55rem 0.9rem;
+	line-height: normal;
+}
+
 button.primary {
 	background: var(--accent);
 	color: var(--accent-fg);

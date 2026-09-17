@@ -272,15 +272,16 @@ export class PlayerEngine {
 		if (!this.book || !this.audio) return;
 		bookMs = Math.min(Math.max(0, bookMs), this.durationMs);
 		const { index, offsetMs } = this.locate(bookMs);
+		// Position first: anything that reports to the server on the events
+		// below must see the new position, never the one we are leaving.
+		this.positionMs = bookMs;
 		if (index !== this.fileIndex) {
 			this.fileIndex = index;
 			this.setSrc(index, offsetMs);
 			if (this.wantPlaying) void this.audio.play().catch(() => (this.needsGesture = true));
-			this.emit('filechange');
 		} else {
 			this.audio.currentTime = offsetMs / 1000;
 		}
-		this.positionMs = bookMs;
 		if (this.status === 'ended') this.status = this.wantPlaying ? 'loading' : 'paused';
 		this.publishPosition();
 		this.writeJournal(true);
