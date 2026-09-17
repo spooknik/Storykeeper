@@ -69,7 +69,62 @@ func scanBookRow(sc interface{ Scan(...any) error }) (*bookRow, error) {
 	return &b, nil
 }
 
-// GET /api/v1/books?library=&q=&sort=title|added|recent&in_progress=1&limit=&offset=
+// inProgressCond matches books the user has started but not finished.
+const inProgressCond = "p.position_ms IS NOT NULL AND p.finished = 0"
+
+// jsonArrayHas matches an exact, case-insensitive member of a JSON array column.
+func jsonArrayHas(col string) string {
+	return "EXISTS (SELECT 1 FROM json_each(" + col + ") WHERE value = ? COLLATE NOCASE)"
+}
+
+// orderClause maps sort/dir to an ORDER BY body. Unknown sort falls back to
+// title, unknown dir to asc. dir=desc flips the primary key only: the grouping
+// prefix (series-less / never-listened rows last) and the tie-breakers always
+// stay ascending so results remain stable.
+func orderClause(sort, dir string) string {
+	var prefix, primary, tie string
+	switch sort {
+	case "author":
+		primary = "json_extract(b.authors,'$[0]') COLLATE NOCASE"
+		tie = "b.title COLLATE NOCASE"
+	case "series":
+		prefix = "b.series = ''" // books without a series sort last
+		primary = "b.series COLLATE NOCASE"
+		tie = "CAST(b.series_seq AS REAL), b.title COLLATE NOCASE"
+	case "added":
+		primary = "b.added_at"
+	case "recent":
+		prefix = "p.listened_at IS NULL" // NULLs last regardless of dir
+		primary = "p.listened_at"
+	case "duration":
+		primary = "b.duration_ms"
+	default:
+		primary = "b.title COLLATE NOCASE"
+	}
+	// "Recently added" and "recently listened" only make sense newest-first,
+	// so those default to desc when no direction is given.
+	if dir == "" && (sort == "added" || sort == "recent") {
+		dir = "desc"
+	}
+	if dir == "desc" {
+		primary += " DESC"
+	} else {
+		primary += " ASC"
+	}
+	parts := make([]string, 0, 3)
+	if prefix != "" {
+		parts = append(parts, prefix)
+	}
+	parts = append(parts, primary)
+	if tie != "" {
+		parts = append(parts, tie)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// GET /api/v1/books?library=&q=&sort=title|author|series|added|recent|duration&dir=asc|desc
+//
+//	&author=&series=&narrator=&in_progress=1&finished=1|0&not_started=1&limit=&offset=
 func (s *Server) listBooks(w http.ResponseWriter, r *http.Request) {
 	u, _ := auth.FromContext(r.Context())
 	q := r.URL.Query()
@@ -85,16 +140,31 @@ func (s *Server) listBooks(w http.ResponseWriter, r *http.Request) {
 		conds = append(conds, `(b.title LIKE ? ESCAPE '\' OR b.authors LIKE ? ESCAPE '\' OR b.series LIKE ? ESCAPE '\' OR b.narrators LIKE ? ESCAPE '\')`)
 		args = append(args, like, like, like, like)
 	}
+	if v := strings.TrimSpace(q.Get("author")); v != "" {
+		conds = append(conds, jsonArrayHas("b.authors"))
+		args = append(args, v)
+	}
+	if v := strings.TrimSpace(q.Get("narrator")); v != "" {
+		conds = append(conds, jsonArrayHas("b.narrators"))
+		args = append(args, v)
+	}
+	if v := strings.TrimSpace(q.Get("series")); v != "" {
+		conds = append(conds, "b.series = ? COLLATE NOCASE")
+		args = append(args, v)
+	}
 	if q.Get("in_progress") == "1" {
-		conds = append(conds, "p.position_ms IS NOT NULL AND p.finished = 0")
+		conds = append(conds, inProgressCond)
 	}
-	order := "b.title COLLATE NOCASE ASC"
-	switch q.Get("sort") {
-	case "added":
-		order = "b.added_at DESC"
-	case "recent":
-		order = "p.listened_at IS NULL, p.listened_at DESC"
+	switch q.Get("finished") {
+	case "1":
+		conds = append(conds, "p.finished = 1")
+	case "0":
+		conds = append(conds, inProgressCond)
 	}
+	if q.Get("not_started") == "1" {
+		conds = append(conds, "p.position_ms IS NULL")
+	}
+	order := orderClause(q.Get("sort"), q.Get("dir"))
 	limit := queryInt(r, "limit", 100)
 	if limit < 1 || limit > 500 {
 		limit = 100
@@ -102,7 +172,7 @@ func (s *Server) listBooks(w http.ResponseWriter, r *http.Request) {
 	offset := max(queryInt(r, "offset", 0), 0)
 
 	whereSQL := " WHERE " + strings.Join(conds, " AND ")
-	// Count uses the same joins so p.* conditions work.
+	// Count uses the same joins and conditions so p.* filters stay in sync.
 	countArgs := append([]any{u.ID}, args...)
 	var total int
 	if err := s.DB.QueryRowContext(r.Context(),

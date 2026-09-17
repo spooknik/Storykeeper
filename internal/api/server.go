@@ -65,6 +65,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/books", user(s.listBooks))
 	mux.Handle("GET /api/v1/books/{id}", user(s.getBook))
 	mux.Handle("PATCH /api/v1/books/{id}", admin(s.updateBook))
+	mux.Handle("GET /api/v1/authors", user(s.listAuthors))
+	mux.Handle("GET /api/v1/series", user(s.listSeries))
+	mux.Handle("GET /api/v1/narrators", user(s.listNarrators))
 
 	mux.Handle("GET /media/books/{id}/files/{idx}", mediaRoute(s.serveBookFile))
 	mux.Handle("GET /media/books/{id}/cover", mediaRoute(s.serveBookCover))

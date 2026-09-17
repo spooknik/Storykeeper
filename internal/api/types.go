@@ -94,6 +94,12 @@ type BookList struct {
 	Total int           `json:"total"`
 }
 
+// Facet is one distinct author, series or narrator with its book count.
+type Facet struct {
+	Name      string `json:"name"`
+	BookCount int    `json:"book_count"`
+}
+
 type ErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
