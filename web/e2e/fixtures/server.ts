@@ -25,7 +25,14 @@ export const BOOKS = {
 	chaptered: { title: 'The Clockwork Gate', author: 'Ada Vance' },
 	/** Two-file mp3 book. Chromium can always decode mp3, so it is the one the
 	 *  player spec actually plays. */
-	multiFile: { title: 'Echoes of Tomorrow', author: 'Bram Sol' }
+	multiFile: {
+		title: 'Echoes of Tomorrow',
+		author: 'Bram Sol',
+		/** Seconds per file. The short first part lets a spec watch a real file
+		 *  boundary go by without waiting out a whole book. */
+		partSeconds: [3, 6] as const,
+		partTitles: ['Part One', 'Part Two'] as const
+	}
 } as const;
 
 const isWindows = process.platform === 'win32';
@@ -105,7 +112,8 @@ function generateLibrary(libDir: string): void {
 			'ffmpeg',
 			[
 				'-y', '-v', 'error',
-				'-f', 'lavfi', '-i', `sine=frequency=${330 + index * 110}:duration=6`,
+				'-f', 'lavfi', '-i',
+				`sine=frequency=${330 + index * 110}:duration=${BOOKS.multiFile.partSeconds[index]}`,
 				'-c:a', 'libmp3lame', '-b:a', '64k',
 				'-metadata', `album=${BOOKS.multiFile.title}`,
 				'-metadata', `artist=${BOOKS.multiFile.author}`,

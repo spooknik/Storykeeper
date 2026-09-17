@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api } from '$lib/api/client';
 	import type { BookDetail } from '$lib/api/types';
@@ -16,23 +15,39 @@
 	let book = $state<BookDetail | null>(null);
 	let error = $state('');
 	let busy = $state(false);
+	let showParts = $state(false);
 	/** Set optimistically while the progress write for this page is in flight. */
 	let finishedOverride = $state<boolean | null>(null);
 	let seenBookmarkVersion = 0;
+	/** Bumped for every book this page loads; a slow earlier fetch is dropped. */
+	let loadToken = 0;
 
 	const isCurrent = $derived(book !== null && player.book?.id === book.id);
 	const finished = $derived(finishedOverride ?? book?.progress?.finished ?? false);
 
-	async function load() {
+	async function load(id: string, token: number) {
 		try {
-			book = await api.get<BookDetail>(`/api/v1/books/${page.params.id}`);
+			const b = await api.get<BookDetail>(`/api/v1/books/${id}`);
+			if (token !== loadToken) return; // a newer book is on screen
+			book = b;
 			finishedOverride = null;
 		} catch (e) {
+			if (token !== loadToken) return;
 			error = e instanceof Error ? e.message : 'Failed to load';
 		}
 	}
 
-	onMount(load);
+	// Navigating straight from one book to another reuses this component, so the
+	// id is what to react to, not mount. Everything the old book put on screen is
+	// cleared first, or its title and chapters linger over the new fetch.
+	$effect(() => {
+		const id = page.params.id ?? '';
+		book = null;
+		error = '';
+		showParts = false;
+		finishedOverride = null;
+		void load(id, ++loadToken);
+	});
 
 	function play() {
 		if (!book) return;
@@ -61,7 +76,6 @@
 
 	const partsOnly = $derived(book !== null && titlesAreParts(book.chapters));
 	const chapterHeading = $derived(book ? chapterLabel(book.chapters) : 'Chapters');
-	let showParts = $state(false);
 
 	// --- finished ---
 
@@ -80,7 +94,7 @@
 				// Un-finishing keeps whatever position the record already holds.
 				const pos = next ? b.duration_ms : (b.progress?.position_ms ?? shownPos);
 				await reportFinished(b.id, next, b.duration_ms, pos);
-				await load();
+				await load(String(b.id), loadToken);
 			}
 		} catch (e) {
 			finishedOverride = null;

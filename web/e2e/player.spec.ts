@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { bookByTitle } from './fixtures/api';
+import { bookByTitle, CSRF } from './fixtures/api';
 import { BOOKS } from './fixtures/server';
 
 test('playing a book opens the bottom player and reports progress', async ({ page }) => {
@@ -42,4 +42,39 @@ test('playing a book opens the bottom player and reports progress', async ({ pag
 	};
 	expect(progress.position_ms).toBeGreaterThanOrEqual(0);
 	expect(progress.device_id).toBeTruthy();
+});
+
+test('playback rolls into the next file at a boundary instead of stopping', async ({ page }) => {
+	// Real time passes here: a whole audio file has to play out.
+	test.slow();
+	const book = await bookByTitle(page.request, BOOKS.multiFile.title);
+	const secondPart = BOOKS.multiFile.partTitles[1];
+	const boundaryMs = BOOKS.multiFile.partSeconds[0] * 1000;
+
+	// Start from the top whatever an earlier spec left in the record: "now" beats
+	// any listen those wrote, so this is always accepted.
+	const now = Date.now();
+	const reset = await page.request.put(`/api/v1/progress/${book.id}`, {
+		headers: CSRF,
+		data: { position_ms: 0, file_index: 0, client_listened_at: now, client_now: now, base_seq: 0 }
+	});
+	expect(reset.status(), await reset.text()).toBe(200);
+
+	await page.goto(`/book/${book.id}`);
+	await page.getByRole('button', { name: /play|resume/i }).first().click();
+
+	const bar = page.locator('.player');
+	const pauseButton = page.getByRole('button', { name: 'Pause', exact: true }).last();
+	await expect(pauseButton).toBeVisible({ timeout: 15_000 });
+
+	// The first part is only a few seconds long, and browsers fire `pause` just
+	// before `ended`: this boundary is where playback used to stop dead.
+	await expect(bar).toContainText(secondPart, { timeout: 20_000 });
+	await expect(pauseButton).toBeVisible();
+
+	// Still moving, not parked at the start of part two.
+	const scrubber = page.getByRole('slider', { name: 'Position' });
+	await expect
+		.poll(async () => Number(await scrubber.inputValue()), { timeout: 15_000 })
+		.toBeGreaterThan(boundaryMs + 900);
 });

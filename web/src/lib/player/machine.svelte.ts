@@ -70,6 +70,13 @@ export class PlayerEngine {
 	userId = 0;
 	serverSeq = 0;
 	serverListenedAt = 0;
+	/**
+	 * When this device last actually listened, as Date.now(). The reporter sends
+	 * it as `client_listened_at` so a report built while paused (a hide/beacon,
+	 * say) describes the listen it really is and cannot outrank a newer listen on
+	 * another device. Deliberate actions (play, seek, markFinished) refresh it.
+	 */
+	lastListenedAt = 0;
 
 	private audio: HTMLAudioElement | null = null;
 	private fileStarts: number[] = [];
@@ -155,6 +162,7 @@ export class PlayerEngine {
 		});
 		a.addEventListener('playing', () => {
 			this.status = 'playing';
+			this.lastListenedAt = Date.now();
 			this.needsGesture = false;
 			this.error = null;
 			this.lastAdvanceAt = Date.now();
@@ -165,7 +173,14 @@ export class PlayerEngine {
 		a.addEventListener('pause', () => {
 			// A pause event we did not ask for (lock screen, headphones unplugged,
 			// another app took the session) is still the listener's intent.
+			if (!this.book) return;
 			if (this.status === 'ended') return;
+			// Every browser fires `pause` immediately before `ended`. While we still
+			// mean to be playing that is a file boundary, not the listener stopping:
+			// clearing wantPlaying here would leave onEnded loading the next file and
+			// never starting it. pause() clears wantPlaying first, so a deliberate
+			// pause at the end of a file is unaffected.
+			if (this.wantPlaying && this.atEndOfFile(a)) return;
 			if (this.status !== 'suspended') this.status = 'paused';
 			this.wantPlaying = false;
 			mediaSession.setPlaybackState('paused');
@@ -177,6 +192,7 @@ export class PlayerEngine {
 			if (this.status !== 'playing') return;
 			this.syncPosition();
 			const now = Date.now();
+			this.lastListenedAt = now;
 			if (now - this.lastJournalAt >= JOURNAL_EVERY_MS) {
 				this.writeJournal(false);
 				this.emit('tick');
@@ -224,8 +240,10 @@ export class PlayerEngine {
 		a.playbackRate = this.rate;
 		mediaSession.setBook(book, this.currentChapter?.title);
 		this.emit('load');
-		if (autoplay) await this.play();
-		else {
+		if (autoplay) {
+			this.lastListenedAt = Date.now();
+			await this.play();
+		} else {
 			this.status = 'paused';
 			this.publishPosition();
 		}
@@ -234,6 +252,7 @@ export class PlayerEngine {
 	async play(): Promise<void> {
 		const a = this.ensureAudio();
 		if (!this.book) return;
+		this.lastListenedAt = Date.now();
 		// A sleep-timer fade may be in flight; starting again cancels it and
 		// restores full volume. Synchronous, so the gesture chain is untouched.
 		this.cancelFade();
@@ -268,8 +287,49 @@ export class PlayerEngine {
 		else void this.play();
 	}
 
+	/**
+	 * Drop the loaded book and every trace of it, without emitting anything: used
+	 * when the session ends or a different user signs in, so the next heartbeat
+	 * can never write one user's position into another's history.
+	 *
+	 * The element itself survives (iOS only ever blesses this one, and a new one
+	 * would be silent until the next tap): it is paused and its source cleared.
+	 */
+	unload(): void {
+		this.cancelFade();
+		this.wantPlaying = false;
+		// book first: emit() and writeJournal() both no-op without one, so the
+		// async `pause` event this triggers stays silent.
+		this.book = null;
+		const a = this.audio;
+		if (a) {
+			a.pause();
+			a.removeAttribute('src');
+			a.load();
+		}
+		this.fileStarts = [];
+		this.fileIndex = 0;
+		this.positionMs = 0;
+		this.durationMs = 0;
+		this.status = 'idle';
+		this.serverSeq = 0;
+		this.serverListenedAt = 0;
+		this.lastListenedAt = 0;
+		this.notice = null;
+		this.needsGesture = false;
+		this.error = null;
+		this.reloadBeforePlay = false;
+		this.pendingSeekSec = null;
+		this.lastCurrentTime = -1;
+		mediaSession.setBook(null);
+		mediaSession.setPlaybackState('none');
+	}
+
 	seekTo(bookMs: number): void {
 		if (!this.book || !this.audio) return;
+		// A seek is a deliberate action, so it counts as listening now: the report
+		// it triggers must not look like a replay of an old listen.
+		this.lastListenedAt = Date.now();
 		bookMs = Math.min(Math.max(0, bookMs), this.durationMs);
 		const { index, offsetMs } = this.locate(bookMs);
 		// Position first: anything that reports to the server on the events
@@ -378,6 +438,7 @@ export class PlayerEngine {
 	markFinished(finished: boolean): void {
 		const b = this.book;
 		if (!b) return;
+		this.lastListenedAt = Date.now();
 		if (finished) {
 			this.cancelFade();
 			this.wantPlaying = false;
@@ -413,6 +474,15 @@ export class PlayerEngine {
 	}
 
 	// --- internals ---
+
+	/**
+	 * True when this element is sitting at the end of its file: `ended` is set
+	 * before the `pause` that precedes it, and the tolerance covers browsers that
+	 * stop a hair short of `duration`.
+	 */
+	private atEndOfFile(a: HTMLAudioElement): boolean {
+		return a.ended || (a.duration > 0 && a.currentTime >= a.duration - 0.25);
+	}
 
 	private locate(bookMs: number): { index: number; offsetMs: number } {
 		const files = this.book?.files ?? [];

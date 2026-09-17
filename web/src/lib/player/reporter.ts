@@ -79,12 +79,21 @@ export class Reporter {
 		}
 	}
 
+	/**
+	 * The report body. `client_listened_at` is when this device last actually
+	 * listened, not when the body was built: a hide/beacon report from a player
+	 * that has been paused for an hour describes an hour-old listen, and the
+	 * server's age correction then keeps it from beating a newer listen
+	 * elsewhere. Deliberate actions refresh `lastListenedAt` first, so they still
+	 * count as fresh.
+	 */
 	private report(finished?: boolean): ProgressReport {
 		const now = Date.now();
+		const listenedAt = Math.min(this.player.lastListenedAt || now, now);
 		return {
 			position_ms: Math.round(this.player.positionMs),
 			file_index: this.player.fileIndex,
-			client_listened_at: now,
+			client_listened_at: listenedAt,
 			client_now: now,
 			base_seq: this.player.serverSeq,
 			...(finished !== undefined ? { finished } : {})
@@ -195,6 +204,14 @@ export class Reporter {
 		}
 		const newer = server.listened_at > this.player.serverListenedAt + ADOPT_THRESHOLD_MS;
 		if (!newer && reason !== 'conflict') return;
+		this.adopt(server);
+	}
+
+	/**
+	 * Move the loaded player onto a server record and say so. Positions within
+	 * the tie window are the same listen, so those only take the seq.
+	 */
+	private adopt(server: Progress): void {
 		const local = Math.round(this.player.positionMs);
 		if (Math.abs(server.position_ms - local) < ADOPT_THRESHOLD_MS) {
 			this.accept(server);
@@ -229,10 +246,26 @@ export class Reporter {
 				} satisfies ProgressReport);
 				journal.write(userId, { ...e, synced: true, serverSeq: res.seq, serverListenedAt: res.listened_at });
 			} catch (err) {
-				if (err instanceof ApiError && err.status === 409) {
-					// Someone listened after us: their record stands. Mark synced so we stop retrying.
+				if (!(err instanceof ApiError) || err.status !== 409) continue;
+				// Someone listened after us: their record stands. Adopting it into
+				// the journal is what stops the rejected position coming back as the
+				// resume position; marking it synced only stops the retries.
+				const server = err.body as Progress | null;
+				if (!server || typeof server.position_ms !== 'number') {
 					journal.write(userId, { ...e, synced: true });
+					continue;
 				}
+				journal.write(userId, {
+					...e,
+					positionMs: server.position_ms,
+					fileIndex: server.file_index,
+					serverSeq: server.seq,
+					serverListenedAt: server.listened_at,
+					clientTs: Date.now(),
+					synced: true
+				});
+				// Already on screen at the stale position: move it, with a toast.
+				if (this.player.book?.id === e.bookId) this.adopt(server);
 			}
 		}
 	}
