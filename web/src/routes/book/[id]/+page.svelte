@@ -9,7 +9,7 @@
 	import { reportFinished } from '$lib/player/reporter';
 	import { chaptersAreParts as titlesAreParts, chapterLabel } from '$lib/player/chapters';
 	import { bookmarks as bookmarkStore } from '$lib/player/bookmarks.svelte';
-	import { journal } from '$lib/player/journal';
+	import { startPosition as resumePosition } from '$lib/player/resume';
 
 	let book = $state<BookDetail | null>(null);
 	let error = $state('');
@@ -20,20 +20,6 @@
 
 	const isCurrent = $derived(book !== null && player.book?.id === book.id);
 	const finished = $derived(finishedOverride ?? book?.progress?.finished ?? false);
-
-	/** Best known starting position: the newer of the server record and the local journal. */
-	function startPosition(b: BookDetail): number {
-		const server = b.progress && !b.progress.finished ? b.progress : null;
-		const local = auth.user ? journal.read(auth.user.id, b.id) : null;
-		if (local && !local.synced) return local.positionMs;
-		if (server && local) {
-			// Both present: prefer the one written later. serverListenedAt in the
-			// journal is the server clock at our last accepted write, so if the
-			// server record is newer than that, someone else listened since.
-			return b.progress!.listened_at > local.serverListenedAt + 2000 ? server.position_ms : local.positionMs;
-		}
-		return server?.position_ms ?? local?.positionMs ?? 0;
-	}
 
 	async function load() {
 		try {
@@ -60,7 +46,7 @@
 			player.serverListenedAt = 0;
 		}
 		// Must stay synchronous up to play(): this click is the gesture iOS needs.
-		void player.load(book, startPosition(book), true);
+		void player.load(book, resumePosition(auth.user?.id ?? 0, book), true);
 	}
 
 	function jump(ms: number) {
@@ -69,7 +55,7 @@
 		else void player.load(book, ms, true);
 	}
 
-	const shownPos = $derived(isCurrent ? player.positionMs : book ? startPosition(book) : 0);
+	const shownPos = $derived(isCurrent ? player.positionMs : book ? resumePosition(auth.user?.id ?? 0, book) : 0);
 
 	const partsOnly = $derived(book !== null && titlesAreParts(book.chapters));
 	const chapterHeading = $derived(book ? chapterLabel(book.chapters) : 'Chapters');

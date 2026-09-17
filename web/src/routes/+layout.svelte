@@ -7,6 +7,10 @@
 	import { player } from '$lib/player/machine.svelte';
 	import { Reporter } from '$lib/player/reporter';
 	import { events } from '$lib/events.svelte';
+	import { journal } from '$lib/player/journal';
+	import { startPosition } from '$lib/player/resume';
+	import { api } from '$lib/api/client';
+	import type { BookDetail } from '$lib/api/types';
 	import Player from '$lib/components/Player.svelte';
 	import Nav from '$lib/components/Nav.svelte';
 
@@ -47,6 +51,7 @@
 			const r = reporter;
 			unsubEvents = events.onProgress((p) => r.onRemoteProgress(p));
 			events.start();
+			void restoreLastBook(user.id);
 		} else {
 			reporter?.stop();
 			reporter = null;
@@ -56,6 +61,29 @@
 			player.userId = 0;
 		}
 	});
+
+	/**
+	 * After a relaunch (iOS kills backgrounded PWAs freely) put the last book
+	 * back into the player bar, paused at the best known position. Creating the
+	 * audio element here is fine; iOS only needs the first play() to come from a
+	 * tap, and that tap will be on this same element.
+	 */
+	async function restoreLastBook(userId: number) {
+		if (player.book) return;
+		const id = journal.lastBook(userId);
+		if (!id) return;
+		try {
+			const book = await api.get<BookDetail>(`/api/v1/books/${id}`);
+			if (player.book || book.progress?.finished) return;
+			if (book.progress) {
+				player.serverSeq = book.progress.seq;
+				player.serverListenedAt = book.progress.listened_at;
+			}
+			await player.load(book, startPosition(userId, book), false);
+		} catch {
+			/* book gone or offline: nothing to restore */
+		}
+	}
 </script>
 
 {#if !auth.loaded}
