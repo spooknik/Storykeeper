@@ -167,6 +167,10 @@ func (s *Store) Report(ctx context.Context, in ReportInput) (*Record, bool, erro
 		if err != nil {
 			return err
 		}
+		// A position past the end is a client bug, not a listen further along.
+		if durationMs > 0 && in.PositionMs > durationMs {
+			in.PositionMs = durationMs
+		}
 
 		cur, err := currentRecord(ctx, tx, in.UserID, in.BookID)
 		if err != nil {

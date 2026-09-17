@@ -31,6 +31,8 @@ services:
       SK_ADMIN_PASSWORD: ${SK_ADMIN_PASSWORD}
       # HTTPS is terminated at Nginx Proxy Manager, so mark cookies Secure.
       SK_SECURE_COOKIE: "true"
+      # NPM is the only way in, so its X-Forwarded-For is the real client address.
+      SK_TRUST_PROXY: "true"
       TZ: ${TZ:-Europe/Copenhagen}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://localhost:8080/api/v1/health"]

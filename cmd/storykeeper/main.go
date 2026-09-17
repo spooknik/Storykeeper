@@ -38,16 +38,18 @@ func main() {
 	libraryPath := flag.String("library", envOr("SK_LIBRARY", ""), "optional initial library folder (SK_LIBRARY)")
 	secureCookie := flag.Bool("secure-cookie", strings.EqualFold(envOr("SK_SECURE_COOKIE", "false"), "true"),
 		"force Secure on the session cookie (SK_SECURE_COOKIE)")
+	trustProxy := flag.Bool("trust-proxy", strings.EqualFold(envOr("SK_TRUST_PROXY", "false"), "true"),
+		"honour X-Forwarded-For from the reverse proxy for rate limiting (SK_TRUST_PROXY)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log, *addr, *dataDir, *libraryPath, *secureCookie); err != nil {
+	if err := run(log, *addr, *dataDir, *libraryPath, *secureCookie, *trustProxy); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, addr, dataDir, libraryPath string, secureCookie bool) error {
+func run(log *slog.Logger, addr, dataDir, libraryPath string, secureCookie, trustProxy bool) error {
 	dataDir, err := filepath.Abs(dataDir)
 	if err != nil {
 		return err
@@ -91,7 +93,7 @@ func run(log *slog.Logger, addr, dataDir, libraryPath string, secureCookie bool)
 	}
 	srv := &api.Server{
 		DB: database, Auth: authSvc, Scanner: scanner,
-		Cfg: api.Config{DataDir: dataDir}, Log: log, Web: webFS,
+		Cfg: api.Config{DataDir: dataDir, TrustProxy: trustProxy}, Log: log, Web: webFS,
 		Events: events.New(),
 	}
 	httpSrv := &http.Server{

@@ -62,6 +62,9 @@ func (s *Server) getProgress(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid book id")
 		return
 	}
+	if !s.bookVisible(w, r, bookID) {
+		return
+	}
 	rec, err := s.progressStore().Get(r.Context(), u.ID, bookID)
 	if err != nil {
 		s.Log.Error("get progress", "err", err, "user", u.ID, "book", bookID)
@@ -79,7 +82,7 @@ func (s *Server) getProgress(w http.ResponseWriter, r *http.Request) {
 // when the report wins, 409 with the CURRENT record when it loses.
 func (s *Server) putProgress(w http.ResponseWriter, r *http.Request) {
 	bookID, in, ok := s.decodeReport(w, r, false)
-	if !ok {
+	if !ok || !s.bookVisible(w, r, bookID) {
 		return
 	}
 	u, _ := auth.FromContext(r.Context())
@@ -115,6 +118,11 @@ func (s *Server) beaconProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := auth.FromContext(r.Context())
+	if b, err := s.loadBook(r, bookID); err != nil || b == nil {
+		// Beacons never get a readable response; just refuse silently.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	rec, accepted, err := s.progressStore().Report(r.Context(), in)
 	if err != nil {
 		if !errors.Is(err, progress.ErrStale) && !errors.Is(err, progress.ErrNoBook) {
@@ -127,6 +135,23 @@ func (s *Server) beaconProgress(w http.ResponseWriter, r *http.Request) {
 		s.publish(u.ID, "progress", toProgress(rec))
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// bookVisible enforces library access for progress routes. Books in a
+// restricted library the user is not granted are reported as 404, exactly as
+// GET /books/{id} does, so their existence is not revealed either.
+func (s *Server) bookVisible(w http.ResponseWriter, r *http.Request, bookID int64) bool {
+	b, err := s.loadBook(r, bookID)
+	if err != nil {
+		s.Log.Error("load book", "err", err, "book", bookID)
+		writeError(w, http.StatusInternalServerError, "internal", "query failed")
+		return false
+	}
+	if b == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such book")
+		return false
+	}
+	return true
 }
 
 // decodeReport parses and validates the shared body of both write endpoints.

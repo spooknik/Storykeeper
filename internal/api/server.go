@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/spooknik/storykeeper/internal/auth"
 	"github.com/spooknik/storykeeper/internal/db"
@@ -15,6 +16,9 @@ import (
 
 type Config struct {
 	DataDir string
+	// TrustProxy enables X-Forwarded-For for the client address (rate limits).
+	// Set it only when a reverse proxy you control is the only way in.
+	TrustProxy bool
 }
 
 type Server struct {
@@ -25,6 +29,9 @@ type Server struct {
 	Log     *slog.Logger
 	Web     fs.FS          // built SvelteKit app; nil disables static serving
 	Events  EventPublisher // may be nil
+
+	loginByUser *auth.Limiter
+	loginByIP   *auth.Limiter
 }
 
 // Handler returns the full route table.
@@ -34,6 +41,12 @@ type Server struct {
 //   - /media/*: internal/media (agent:media) via serveBookFile/serveBookCover
 //   - progress, events, upload, users, sessions, bookmarks: Wave A agent packages
 func (s *Server) Handler() http.Handler {
+	if s.loginByUser == nil {
+		s.loginByUser = auth.NewLimiter(10, 15*time.Minute)
+	}
+	if s.loginByIP == nil {
+		s.loginByIP = auth.NewLimiter(60, 15*time.Minute)
+	}
 	mux := http.NewServeMux()
 
 	// Public
