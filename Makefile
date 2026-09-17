@@ -1,4 +1,4 @@
-.PHONY: web build run dev-web test docker clean
+.PHONY: web build run dev-web test e2e docker clean
 
 # Build the SvelteKit app into web/build (embedded by the Go binary).
 web:
@@ -23,6 +23,11 @@ test:
 	go vet ./...
 	go test ./...
 	cd web && npm run check
+
+# Playwright end-to-end smoke tests against the real binary and embedded UI.
+# Builds web/build and the Go binary itself if needed; needs ffmpeg on PATH.
+e2e:
+	cd web && npm run test:e2e
 
 # Build the container image locally.
 docker:

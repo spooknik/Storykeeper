@@ -30,8 +30,12 @@ export const BOOKS = {
 
 const isWindows = process.platform === 'win32';
 
-function run(cmd: string, args: string[], cwd: string): void {
-	const res = spawnSync(cmd, args, { cwd, encoding: 'utf8', shell: isWindows });
+/**
+ * Run a command to completion. `shell` is only needed for npm, which is a .cmd
+ * shim on Windows; using it for ffmpeg would mangle arguments containing spaces.
+ */
+function run(cmd: string, args: string[], cwd: string, shell = false): void {
+	const res = spawnSync(cmd, args, { cwd, encoding: 'utf8', shell });
 	if (res.status !== 0) {
 		throw new Error(
 			`${cmd} ${args.join(' ')} failed (${res.status})\n${res.stdout ?? ''}\n${res.stderr ?? ''}`
@@ -40,7 +44,7 @@ function run(cmd: string, args: string[], cwd: string): void {
 }
 
 function haveFfmpeg(): boolean {
-	const probe = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8', shell: isWindows });
+	const probe = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' });
 	return probe.status === 0;
 }
 
@@ -158,7 +162,7 @@ export default async function globalSetup(): Promise<void> {
 	// 1. web build (embedded by the Go binary through web/embed.go)
 	if (!fs.existsSync(path.join(web, 'build', 'index.html'))) {
 		console.log('[e2e] web/build missing, running npm run build');
-		run('npm', ['run', 'build'], web);
+		run('npm', ['run', 'build'], web, true);
 	}
 	// The bundler wipes web/build, and the repo keeps a .gitkeep there.
 	fs.writeFileSync(path.join(web, 'build', '.gitkeep'), '');
@@ -168,7 +172,10 @@ export default async function globalSetup(): Promise<void> {
 	const dataDir = path.join(tmpDir, 'data');
 	fs.mkdirSync(dataDir, { recursive: true });
 
+	// Recorded before anything can fail, so globalTeardown always knows what to
+	// remove even when the fixture generation or the go build blows up.
 	const state: ServerState = { baseURL, pid: 0, tmpDir };
+	writeState(state);
 
 	// 2. fixture library
 	if (!haveFfmpeg()) {

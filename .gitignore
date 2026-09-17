@@ -19,3 +19,7 @@
 !.env.example
 /.claude/
 !/web/build/.gitkeep
+# e2e (Playwright)
+/web/playwright-report/
+/web/test-results/
+/web/e2e/.state/
