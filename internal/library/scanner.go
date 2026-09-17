@@ -111,7 +111,7 @@ func (s *Scanner) scanOnce(ctx context.Context, libraryID int64) error {
 		return fmt.Errorf("load library %d: %w", libraryID, err)
 	}
 
-	relPaths, err := walkAudioFiles(libPath)
+	relPaths, partial, err := walkAudioFiles(libPath)
 	if err != nil {
 		return fmt.Errorf("walk library %d root %q: %w", libraryID, libPath, err)
 	}
@@ -142,8 +142,11 @@ func (s *Scanner) scanOnce(ctx context.Context, libraryID int64) error {
 		}
 	}
 
-	n, err := s.removeStale(ctx, libraryID, valid)
-	if err != nil {
+	if partial {
+		// Some folders could not be read; deleting their books now would also
+		// delete everyone's progress in them. Keep them until a full walk succeeds.
+		slog.Warn("library scan: some folders were unreadable, skipping removal of missing books", "library_id", libraryID)
+	} else if n, err := s.removeStale(ctx, libraryID, valid); err != nil {
 		slog.Error("library scan: remove stale books failed", "library_id", libraryID, "err", err)
 	} else {
 		removed = n

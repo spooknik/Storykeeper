@@ -2,6 +2,7 @@ package library
 
 import (
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,14 +32,25 @@ func isHiddenOrIgnored(name string) bool {
 // walkAudioFiles walks root and returns every audio file found, as paths
 // relative to root using forward slashes. Hidden files/dirs and @eaDir are
 // skipped entirely.
-func walkAudioFiles(root string) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+//
+// An unreadable directory below root (typically a permission problem) is
+// logged and skipped rather than failing the whole library; partial is then
+// true so the caller knows not to treat books under it as removed.
+func walkAudioFiles(root string) (out []string, partial bool, err error) {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
-			return err
+			if p == root {
+				return err
+			}
+			slog.Warn("library scan: cannot read, skipping", "path", p, "err", err)
+			partial = true
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		name := d.Name()
 		if p != root && isHiddenOrIgnored(name) {
@@ -61,7 +73,7 @@ func walkAudioFiles(root string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return out, nil
+	return out, partial, nil
 }
