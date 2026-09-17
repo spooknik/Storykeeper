@@ -394,6 +394,16 @@ func applyFolderConvention(meta *bookMeta, folderPath string, isSingleFile bool)
 		if isEmptyNamesJSON(meta.authorsJSON) {
 			meta.authorsJSON = namesJSON([]string{parts[0]})
 		}
+	} else if depth == 1 {
+		// Flat library: "Author - Title" folders directly under the root.
+		if author, title, ok := splitAuthorTitle(bookFolderName); ok {
+			if isEmptyNamesJSON(meta.authorsJSON) {
+				meta.authorsJSON = namesJSON([]string{author})
+			}
+			if meta.title == bookFolderName {
+				meta.title = title
+			}
+		}
 	}
 
 	seriesKnown := meta.series != ""
@@ -423,4 +433,20 @@ func applyFolderConvention(meta *bookMeta, folderPath string, isSingleFile bool)
 	}
 
 	applyTitleCleanup(meta, bookFolderName)
+}
+
+// splitAuthorTitle parses a flat-library folder name of the form
+// "Author - Title". It splits on the FIRST " - " so titles that contain a
+// dash themselves survive. Both halves must be non-empty.
+func splitAuthorTitle(name string) (author, title string, ok bool) {
+	i := strings.Index(name, " - ")
+	if i <= 0 {
+		return "", "", false
+	}
+	author = strings.TrimSpace(name[:i])
+	title = strings.TrimSpace(name[i+3:])
+	if author == "" || title == "" {
+		return "", "", false
+	}
+	return author, title, true
 }

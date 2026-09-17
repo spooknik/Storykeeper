@@ -52,3 +52,22 @@ func TestNormalizeSeq(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitAuthorTitle(t *testing.T) {
+	cases := []struct {
+		in, author, title string
+		ok                bool
+	}{
+		{"Bill Bryson - The Body", "Bill Bryson", "The Body", true},
+		{"Iain M. Banks - Consider Phlebas - Culture 1", "Iain M. Banks", "Consider Phlebas - Culture 1", true},
+		{"The Body", "", "", false},
+		{" - The Body", "", "", false},
+		{"Bill Bryson - ", "", "", false},
+	}
+	for _, c := range cases {
+		a, ti, ok := splitAuthorTitle(c.in)
+		if ok != c.ok || a != c.author || ti != c.title {
+			t.Errorf("splitAuthorTitle(%q) = %q, %q, %v; want %q, %q, %v", c.in, a, ti, ok, c.author, c.title, c.ok)
+		}
+	}
+}
