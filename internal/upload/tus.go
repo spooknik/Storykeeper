@@ -7,6 +7,7 @@ package upload
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -146,6 +147,7 @@ func (s *Service) Handler() http.Handler {
 // Run starts the background sweep that deletes incomplete uploads older
 // than cfg.MaxAge. It blocks until ctx is cancelled.
 func (s *Service) Run(ctx context.Context) {
+	s.retryUnmoved(ctx)
 	ticker := time.NewTicker(expirySweep)
 	defer ticker.Stop()
 	for {
@@ -153,6 +155,7 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			s.retryUnmoved(ctx)
 			s.sweepExpired()
 		}
 	}
@@ -191,8 +194,8 @@ func (s *Service) preCreate(hook handler.HookEvent) (handler.HTTPResponse, handl
 			handler.NewError("ERR_SK_LIBRARY", "library_id must be a number", http.StatusBadRequest)
 	}
 
-	var exists int
-	err = s.db.QueryRowContext(hook.Context, `SELECT 1 FROM libraries WHERE id = ?`, libID).Scan(&exists)
+	var libPath string
+	err = s.db.QueryRowContext(hook.Context, `SELECT path FROM libraries WHERE id = ?`, libID).Scan(&libPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return handler.HTTPResponse{}, handler.FileInfoChanges{},
 			handler.NewError("ERR_SK_LIBRARY", "library not found", http.StatusBadRequest)
@@ -203,7 +206,66 @@ func (s *Service) preCreate(hook handler.HookEvent) (handler.HTTPResponse, handl
 			handler.NewError("ERR_SK_INTERNAL", "failed to validate library", http.StatusInternalServerError)
 	}
 
+	// Refuse before a single byte is transferred if the finished file could
+	// not be moved into the library anyway (read-only mount, permissions).
+	if err := probeWritable(libPath); err != nil {
+		s.log.Warn("upload: library not writable", "library_id", libID, "path", libPath, "err", err)
+		return handler.HTTPResponse{}, handler.FileInfoChanges{},
+			handler.NewError("ERR_SK_READONLY",
+				"the library folder is not writable by the server: check the volume mount (remove :ro) and folder permissions",
+				http.StatusBadRequest)
+	}
+
 	return handler.HTTPResponse{}, handler.FileInfoChanges{}, nil
+}
+
+// probeWritable creates and removes a temporary file in dir.
+func probeWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".storykeeper-write-test-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	_ = f.Close()
+	return os.Remove(name)
+}
+
+// retryUnmoved finds uploads that finished but could not be moved into their
+// library (typically a permissions problem that has since been fixed) and
+// runs the completion step for them again.
+func (s *Service) retryUnmoved(ctx context.Context) {
+	entries, err := os.ReadDir(s.uploadsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".info") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.uploadsDir, name))
+		if err != nil {
+			continue
+		}
+		var info handler.FileInfo
+		if err := json.Unmarshal(raw, &info); err != nil || info.Size <= 0 || info.Offset < info.Size {
+			continue // corrupt or still in progress
+		}
+		if info.Storage == nil {
+			info.Storage = map[string]string{}
+		}
+		if info.Storage[filestore.StorageKeyPath] == "" {
+			info.Storage[filestore.StorageKeyPath] = filepath.Join(s.uploadsDir, strings.TrimSuffix(name, ".info"))
+		}
+		if info.Storage[filestore.StorageKeyInfoPath] == "" {
+			info.Storage[filestore.StorageKeyInfoPath] = filepath.Join(s.uploadsDir, name)
+		}
+		if _, err := os.Stat(info.Storage[filestore.StorageKeyPath]); err != nil {
+			continue
+		}
+		s.log.Info("upload: retrying move of a finished upload", "id", info.ID)
+		s.handleComplete(handler.HookEvent{Context: ctx, Upload: info})
+	}
 }
 
 // completionLoop drains handler.CompleteUploads for the life of the

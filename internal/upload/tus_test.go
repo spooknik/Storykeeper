@@ -348,3 +348,18 @@ func TestSanitizeName(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateRefusedWhenLibraryNotWritable(t *testing.T) {
+	if err := probeWritable(t.TempDir()); err != nil {
+		t.Fatalf("temp dir should be writable: %v", err)
+	}
+	// A regular file where a directory is expected is the portable way to get
+	// a guaranteed write failure on every OS.
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := probeWritable(notADir); err == nil {
+		t.Fatal("probe should fail when the library path is not a directory")
+	}
+}
