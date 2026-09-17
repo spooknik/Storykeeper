@@ -57,10 +57,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /media/books/{id}/cover", mediaRoute(s.serveBookCover))
 
 	// --- Wave A stubs ---
-	mux.Handle("GET /api/v1/progress", user(s.notImplemented))
-	mux.Handle("GET /api/v1/progress/{bookId}", user(s.notImplemented))
-	mux.Handle("PUT /api/v1/progress/{bookId}", user(s.notImplemented))
-	mux.Handle("POST /api/v1/progress/{bookId}/beacon", user(s.notImplemented))
+	mux.Handle("GET /api/v1/progress", user(s.listProgress))
+	mux.Handle("GET /api/v1/progress/{bookId}", user(s.getProgress))
+	mux.Handle("PUT /api/v1/progress/{bookId}", user(s.putProgress))
+	mux.Handle("POST /api/v1/progress/{bookId}/beacon", user(s.beaconProgress))
 	mux.Handle("GET /api/v1/events", user(s.events))
 	mux.Handle("/api/v1/upload/", user(s.notImplemented))
 	mux.Handle("GET /api/v1/users", admin(s.listUsers))
