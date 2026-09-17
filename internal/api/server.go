@@ -23,7 +23,8 @@ type Server struct {
 	Scanner *library.Scanner
 	Cfg     Config
 	Log     *slog.Logger
-	Web     fs.FS // built SvelteKit app; nil disables static serving
+	Web     fs.FS          // built SvelteKit app; nil disables static serving
+	Events  EventPublisher // may be nil
 }
 
 // Handler returns the full route table.
