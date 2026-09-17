@@ -63,6 +63,15 @@
 	const shownPos = $derived(
 		isCurrent ? player.positionMs : (book ? startPosition(book) : 0)
 	);
+
+	// Entries like "Disc 3", "Part 12", "Track 7" or "07" are file boundaries the
+	// scanner synthesised, not real chapters. Label them honestly and keep them
+	// out of the way unless asked for.
+	const genericTitle = /^(?:disc|disk|cd|part|track|chapter|file)?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$/i;
+	const chaptersAreParts = $derived(
+		book !== null && book.chapters.length > 0 && book.chapters.every((c) => genericTitle.test(c.title.trim()))
+	);
+	let showParts = $state(false);
 </script>
 
 <div class="page">
@@ -105,8 +114,15 @@
 			<p class="desc">{book.description}</p>
 		{/if}
 
-		{#if book.chapters.length > 0}
-			<h2>Chapters</h2>
+		{#if book.chapters.length > 0 && chaptersAreParts && !showParts}
+			<h2>Parts</h2>
+			<p class="muted">
+				This book has no chapter markers, only {book.chapters.length} audio parts of about
+				{fmtDuration(book.duration_ms / book.chapters.length)} each.
+				<button class="inline" onclick={() => (showParts = true)}>Show parts</button>
+			</p>
+		{:else if book.chapters.length > 0}
+			<h2>{chaptersAreParts ? 'Parts' : 'Chapters'}</h2>
 			<ol class="chapters">
 				{#each book.chapters as c (c.index)}
 					<li class:active={isCurrent && player.currentChapter?.index === c.index}>
@@ -170,6 +186,11 @@
 	}
 	.chapters li.active .link {
 		color: var(--accent);
+	}
+	.inline {
+		padding: 0.25rem 0.6rem;
+		margin-left: 0.4rem;
+		font-size: 0.85rem;
 	}
 	.link {
 		width: 100%;
