@@ -56,6 +56,8 @@ func (s *Server) Handler() http.Handler {
 	// Authenticated
 	mux.Handle("POST /api/v1/auth/logout", user(s.logout))
 	mux.Handle("GET /api/v1/auth/me", user(s.me))
+	mux.Handle("GET /api/v1/me/prefs", user(s.getPrefs))
+	mux.Handle("PUT /api/v1/me/prefs", user(s.putPrefs))
 
 	mux.Handle("GET /api/v1/libraries", user(s.listLibraries))
 	mux.Handle("POST /api/v1/libraries", admin(s.createLibrary))
@@ -77,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/progress", user(s.listProgress))
 	mux.Handle("GET /api/v1/progress/{bookId}", user(s.getProgress))
 	mux.Handle("PUT /api/v1/progress/{bookId}", user(s.putProgress))
+	mux.Handle("PUT /api/v1/progress/{bookId}/rate", user(s.putProgressRate))
 	mux.Handle("POST /api/v1/progress/{bookId}/beacon", user(s.beaconProgress))
 	mux.Handle("GET /api/v1/events", user(s.events))
 	mux.Handle("/api/v1/upload/", requireUser(s.uploadHandler()))

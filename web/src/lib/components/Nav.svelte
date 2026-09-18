@@ -82,16 +82,9 @@
 		color: var(--accent);
 		font-weight: 600;
 	}
-	/* Phones get icons only; the accessible name stays on the link itself. */
+	/* Phones get the fixed bottom tab bar (TabBar.svelte) instead. */
 	@media (max-width: 560px) {
 		.nav {
-			gap: 0.1rem;
-			padding: 0.4rem 0.5rem;
-		}
-		.link {
-			padding: 0.45rem 0.6rem;
-		}
-		.label {
 			display: none;
 		}
 	}

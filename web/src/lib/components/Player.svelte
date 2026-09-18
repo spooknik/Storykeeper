@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { player, SKIP_MS } from '$lib/player/machine.svelte';
+	import { player } from '$lib/player/machine.svelte';
+	import { prefs } from '$lib/player/prefs.svelte';
+	import { api, ApiError } from '$lib/api/client';
 	import { chapterLabel } from '$lib/player/chapters';
 	import { bookmarks } from '$lib/player/bookmarks.svelte';
 	import { sleepTimer, SLEEP_MINUTES, type SleepMode } from '$lib/player/sleep.svelte';
@@ -11,9 +13,14 @@
 
 	let scrubbing = $state(false);
 	let scrubMs = $state(0);
-	let sheet = $state<'none' | 'chapters' | 'sleep'>('none');
+	let sheet = $state<'none' | 'chapters' | 'sleep' | 'speed'>('none');
 	let playerHeight = $state(0);
 	let chapterList = $state<HTMLElement | null>(null);
+
+	const backLabel = $derived(`Back ${Math.round(player.skipBackMs / 1000)} seconds`);
+	const forwardLabel = $derived(`Forward ${Math.round(player.skipForwardMs / 1000)} seconds`);
+	/** The toggle reflects whether the loaded book currently has an override. */
+	const perBook = $derived(player.bookRateOverride != null);
 
 	const shownMs = $derived(scrubbing ? scrubMs : player.positionMs);
 	const pct = $derived(player.durationMs > 0 ? (shownMs / player.durationMs) * 100 : 0);
@@ -73,6 +80,57 @@
 		player.seekTo(startMs);
 		sheet = 'none';
 	}
+
+	/** "1×", "1.5×", "1.25×" — no trailing zeros. */
+	function formatRate(r: number): string {
+		return `${Number(r.toFixed(2))}×`;
+	}
+
+	/**
+	 * Choosing a speed. When the "for this book only" toggle is on, it's a
+	 * per-book override: applied locally and PUT to the progress record. When
+	 * off, it's the listener's global default, saved through the prefs store
+	 * (which applies it to the engine itself).
+	 */
+	async function pickRate(r: number) {
+		const b = player.book;
+		if (perBook && b) {
+			player.setRate(r, { perBook: true });
+			try {
+				await api.put(`/api/v1/progress/${b.id}/rate`, { playback_rate: r });
+			} catch {
+				toast('Could not save this book’s speed.');
+			}
+		} else {
+			try {
+				await prefs.save({ playbackRate: r });
+			} catch {
+				toast('Could not save playback speed.');
+			}
+		}
+	}
+
+	/** Flip the "for this book only" toggle itself, independent of picking a speed. */
+	async function togglePerBook() {
+		const b = player.book;
+		if (!b) return;
+		if (perBook) {
+			player.clearBookRate();
+			try {
+				await api.put(`/api/v1/progress/${b.id}/rate`, { playback_rate: null });
+			} catch (e) {
+				toast(e instanceof ApiError ? e.message : 'Could not clear this book’s speed.');
+			}
+		} else {
+			const r = player.rate;
+			player.setRate(r, { perBook: true });
+			try {
+				await api.put(`/api/v1/progress/${b.id}/rate`, { playback_rate: r });
+			} catch (e) {
+				toast(e instanceof ApiError ? e.message : 'Could not save this book’s speed.');
+			}
+		}
+	}
 </script>
 
 {#if player.book}
@@ -113,7 +171,7 @@
 				</div>
 			</a>
 			<div class="controls">
-				<button onclick={() => player.skip(-SKIP_MS)} aria-label="Back 30 seconds">
+				<button onclick={() => player.skip(-player.skipBackMs)} aria-label={backLabel}>
 					<Icon name="rewind-30" size={22} />
 				</button>
 				{#if player.needsGesture || player.status === 'suspended'}
@@ -131,7 +189,7 @@
 						<Icon name="play" size={22} />
 					</button>
 				{/if}
-				<button onclick={() => player.skip(SKIP_MS)} aria-label="Forward 30 seconds">
+				<button onclick={() => player.skip(player.skipForwardMs)} aria-label={forwardLabel}>
 					<Icon name="forward-30" size={22} />
 				</button>
 			</div>
@@ -156,15 +214,10 @@
 				<Icon name="bookmark" size={15} />
 				Bookmark
 			</button>
-			<select
-				value={player.rate}
-				onchange={(e) => player.setRate(Number((e.target as HTMLSelectElement).value))}
-				aria-label="Speed"
-			>
-				{#each rates as r (r)}
-					<option value={r}>{r}×</option>
-				{/each}
-			</select>
+			<button onclick={() => (sheet = 'speed')} aria-haspopup="dialog" aria-label="Speed">
+				<Icon name="gauge" size={15} />
+				{formatRate(player.rate)}
+			</button>
 		</div>
 		{#if player.error}
 			<div class="error small">{player.error}</div>
@@ -194,12 +247,14 @@
 				<li>
 					<button class="entry" class:active={!sleepTimer.armed} onclick={() => pickSleep('off')}>
 						<span class="label">Off</span>
+						{#if prefs.defaultSleepMinutes === 0}<span class="muted small-tag">Default</span>{/if}
 					</button>
 				</li>
 				{#each SLEEP_MINUTES as m (m)}
 					<li>
 						<button class="entry" class:active={sleepTimer.mode === m} onclick={() => pickSleep(m)}>
 							<span class="label">{m} minutes</span>
+							{#if prefs.defaultSleepMinutes === m}<span class="muted small-tag">Default</span>{/if}
 						</button>
 					</li>
 				{/each}
@@ -215,6 +270,22 @@
 			</ul>
 			<p class="hint muted">The volume fades out over 5 seconds before the pause.</p>
 		</Sheet>
+	{:else if sheet === 'speed'}
+		<Sheet title="Playback speed" onclose={() => (sheet = 'none')}>
+			<label class="switch-row">
+				<input type="checkbox" checked={perBook} onchange={togglePerBook} />
+				<span>For this book only</span>
+			</label>
+			<ul class="list">
+				{#each rates as r (r)}
+					<li>
+						<button class="entry" class:active={player.rate === r} onclick={() => pickRate(r)}>
+							<span class="label">{formatRate(r)}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		</Sheet>
 	{/if}
 {/if}
 
@@ -223,11 +294,18 @@
 		position: fixed;
 		left: 0;
 		right: 0;
-		bottom: 0;
+		/* Above the tab bar when it's present; on desktop --tabbar-height is 0. */
+		bottom: var(--tabbar-height, 0px);
 		padding: 0 0.75rem calc(var(--safe-bottom) + 0.5rem);
 		background: var(--bg-raised);
 		border-top: 1px solid var(--border);
 		z-index: 10;
+	}
+	@media (max-width: 560px) {
+		.player {
+			/* The tab bar owns the safe-area inset at this width; don't double it. */
+			padding-bottom: 0.5rem;
+		}
 	}
 	.notice {
 		display: flex;
@@ -338,8 +416,7 @@
 	.tools::-webkit-scrollbar {
 		display: none;
 	}
-	.tools button,
-	.tools select {
+	.tools button {
 		flex-shrink: 0;
 		font-size: 0.78rem;
 		padding: 0.3rem 0.55rem;
@@ -395,5 +472,20 @@
 	.hint {
 		font-size: 0.75rem;
 		margin: 0.6rem 0 0;
+	}
+	.switch-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.9rem;
+		padding: 0.6rem 0.25rem;
+		border-bottom: 1px solid var(--border);
+	}
+	.switch-row input[type='checkbox'] {
+		width: 1.1rem;
+		height: 1.1rem;
+	}
+	.small-tag {
+		font-size: 0.7rem;
 	}
 </style>

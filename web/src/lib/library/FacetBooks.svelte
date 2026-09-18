@@ -8,6 +8,7 @@
 	import BookCard from './BookCard.svelte';
 	import GroupSection from './GroupSection.svelte';
 	import { bySeriesSeq, compareNames, facetHref, groupBooks, seriesCount } from './group';
+	import { isFinished } from './progress';
 	import { booksUrl, DEFAULT_QUERY, type FacetFilter } from './query';
 
 	interface Props {
@@ -34,6 +35,8 @@
 	let error = $state('');
 
 	const ordered = $derived(kind === 'series' ? [...books].sort(bySeriesSeq) : books);
+	/** First book in series order that isn't finished yet, or undefined once every book is. */
+	const nextUp = $derived(kind === 'series' ? ordered.find((b) => !isFinished(b)) : undefined);
 	/** An author or narrator with several series reads best split into series sections. */
 	const groups = $derived(kind === 'series' ? [] : groupBooks(ordered, 'series'));
 	const useGroups = $derived(kind !== 'series' && seriesCount(books) > 1);
@@ -103,6 +106,24 @@
 
 	{#if error}<p class="error">{error}</p>{/if}
 
+	{#if kind === 'series' && !loading && books.length > 0}
+		<div class="next-up">
+			<h2 class="next-up-head">Next up</h2>
+			{#if nextUp}
+				<a class="next-up-card" href="/book/{nextUp.id}">
+					{#if nextUp.cover_url}
+						<img class="cover" src={nextUp.cover_url} alt="" loading="lazy" />
+					{:else}
+						<div class="cover placeholder"><Icon name="music" size={20} /></div>
+					{/if}
+					<span class="title">{nextUp.title}</span>
+				</a>
+			{:else}
+				<p class="muted">All finished</p>
+			{/if}
+		</div>
+	{/if}
+
 	{#if loading && books.length === 0}
 		<p class="muted">Loading…</p>
 	{:else if books.length === 0}
@@ -136,5 +157,42 @@
 	.meta {
 		margin: 0.15rem 0;
 		font-size: 0.85rem;
+	}
+	.next-up {
+		margin-bottom: 1.25rem;
+	}
+	.next-up-head {
+		margin: 0 0 0.4rem;
+		font-size: 0.95rem;
+		color: var(--fg-muted);
+	}
+	.next-up-card {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		max-width: 20rem;
+		padding: 0.4rem;
+		border: 1px solid var(--border);
+		border-radius: 0.5rem;
+		text-decoration: none;
+		color: inherit;
+	}
+	.next-up-card .cover {
+		width: 2.6rem;
+		height: 2.6rem;
+		border-radius: 0.3rem;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+	.next-up-card .placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.next-up-card .title {
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

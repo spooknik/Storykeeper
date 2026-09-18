@@ -43,6 +43,8 @@ export interface Progress {
 	device_id: string;
 	device_name: string;
 	finished: boolean;
+	/** Per-book rate override; null means use the listener's global default. */
+	playback_rate: number | null;
 }
 
 export interface ProgressReport {
@@ -173,3 +175,9 @@ export interface Facet {
 
 export type BookSort = 'title' | 'author' | 'series' | 'added' | 'recent' | 'duration';
 export type SortDir = 'asc' | 'desc';
+
+/** GET /api/v1/series — a Facet plus the requesting user's progress across it. */
+export interface SeriesFacet extends Facet {
+	finished_count: number;
+	in_progress_count: number;
+}

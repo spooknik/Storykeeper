@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api } from '$lib/api/client';
 	import type { BookList, BookSummary } from '$lib/api/types';
@@ -45,6 +45,7 @@
 	let qInput = $state('');
 	let syncedQ = '';
 	let searchTimer: ReturnType<typeof setTimeout>;
+	let searchInput = $state<HTMLInputElement | null>(null);
 
 	$effect(() => {
 		const urlQ = query.q;
@@ -52,6 +53,16 @@
 			syncedQ = urlQ;
 			qInput = urlQ;
 		}
+	});
+
+	// The mobile tab bar's Search tab links here with ?focus=1 so tapping it
+	// jumps straight into the search box instead of just landing on the page.
+	$effect(() => {
+		if (page.url.searchParams.get('focus') !== '1') return;
+		searchInput?.focus();
+		const url = new URL(page.url);
+		url.searchParams.delete('focus');
+		replaceState(url, {});
 	});
 
 	function update(patch: Partial<LibraryQuery>) {
@@ -135,6 +146,7 @@
 				placeholder="Search titles, authors, series"
 				aria-label="Search the library"
 				bind:value={qInput}
+				bind:this={searchInput}
 				oninput={onSearchInput}
 			/>
 			{#if qInput !== ''}

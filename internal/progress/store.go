@@ -55,6 +55,9 @@ type Record struct {
 	DeviceID   string `json:"device_id"`
 	DeviceName string `json:"device_name"`
 	Finished   bool   `json:"finished"`
+	// PlaybackRate is a per-book override of the user's default playback
+	// rate. Nil means no override is set.
+	PlaybackRate *float64 `json:"playback_rate"`
 }
 
 // ReportInput is one client progress report.
@@ -81,16 +84,21 @@ type Store struct {
 func New(d *db.DB) *Store { return &Store{DB: d} }
 
 const recordSelect = `SELECT book_id, position_ms, duration_ms, file_index, seq,
-	listened_at, device_id, device_name, finished FROM progress`
+	listened_at, device_id, device_name, finished, playback_rate FROM progress`
 
 type scanner interface{ Scan(...any) error }
 
 func scanRecord(sc scanner) (*Record, error) {
 	var r Record
+	var rate sql.NullFloat64
 	err := sc.Scan(&r.BookID, &r.PositionMs, &r.DurationMs, &r.FileIndex, &r.Seq,
-		&r.ListenedAt, &r.DeviceID, &r.DeviceName, &r.Finished)
+		&r.ListenedAt, &r.DeviceID, &r.DeviceName, &r.Finished, &rate)
 	if err != nil {
 		return nil, err
+	}
+	if rate.Valid {
+		v := rate.Float64
+		r.PlaybackRate = &v
 	}
 	return &r, nil
 }
@@ -191,23 +199,28 @@ func (s *Store) Report(ctx context.Context, in ReportInput) (*Record, bool, erro
 		}
 
 		finished := false
+		// playback_rate is never written by Report; it carries forward
+		// whatever was already stored (nil when nothing has set it).
+		var rate *float64
 		if cur != nil {
 			finished = cur.Finished
+			rate = cur.PlaybackRate
 		}
 		if in.Finished != nil {
 			finished = *in.Finished
 		}
 
 		next := &Record{
-			BookID:     in.BookID,
-			PositionMs: in.PositionMs,
-			DurationMs: durationMs,
-			FileIndex:  in.FileIndex,
-			Seq:        seq,
-			ListenedAt: listenedAt,
-			DeviceID:   in.DeviceID,
-			DeviceName: in.DeviceName,
-			Finished:   finished,
+			BookID:       in.BookID,
+			PositionMs:   in.PositionMs,
+			DurationMs:   durationMs,
+			FileIndex:    in.FileIndex,
+			Seq:          seq,
+			ListenedAt:   listenedAt,
+			DeviceID:     in.DeviceID,
+			DeviceName:   in.DeviceName,
+			Finished:     finished,
+			PlaybackRate: rate,
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO progress
 			(user_id, book_id, position_ms, duration_ms, file_index, seq, listened_at,
@@ -246,6 +259,57 @@ func (s *Store) Report(ctx context.Context, in ReportInput) (*Record, bool, erro
 		return nil, false, ErrStale
 	}
 	return rec, accepted, nil
+}
+
+// SetPlaybackRate sets or clears the per-book playback rate override. It is a
+// preference edit, not a listen report, so it bypasses shouldAccept entirely
+// and can never win or lose against one.
+//
+// When there is no existing progress row, a fresh one is created at position
+// 0, not finished, with seq and listened_at left at zero: this store must
+// never fabricate a listen that did not happen. When a row already exists,
+// only playback_rate changes; its position, timestamps, device and finished
+// state are left exactly as they were.
+func (s *Store) SetPlaybackRate(ctx context.Context, userID, bookID int64, rate *float64) (Record, error) {
+	var rec *Record
+	err := s.DB.Write(ctx, func(tx *sql.Tx) error {
+		var durationMs int64
+		err := tx.QueryRowContext(ctx, `SELECT duration_ms FROM books WHERE id = ?`, bookID).Scan(&durationMs)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNoBook
+		}
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `INSERT INTO progress
+			(user_id, book_id, position_ms, duration_ms, file_index, seq, listened_at,
+			 received_at, device_id, device_name, finished, playback_rate)
+			VALUES (?, ?, 0, ?, 0, 0, 0, ?, '', '', 0, ?)
+			ON CONFLICT (user_id, book_id) DO UPDATE SET
+				playback_rate = excluded.playback_rate`,
+			userID, bookID, durationMs, db.Now(), rateArg(rate)); err != nil {
+			return err
+		}
+
+		cur, err := currentRecord(ctx, tx, userID, bookID)
+		if err != nil {
+			return err
+		}
+		rec = cur
+		return nil
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	return *rec, nil
+}
+
+func rateArg(rate *float64) any {
+	if rate == nil {
+		return nil
+	}
+	return *rate
 }
 
 // shouldAccept implements the write rule: a newer listen always wins, and

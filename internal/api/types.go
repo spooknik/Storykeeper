@@ -12,15 +12,41 @@ type Library struct {
 }
 
 type Progress struct {
-	BookID     int64  `json:"book_id"`
-	PositionMs int64  `json:"position_ms"`
-	DurationMs int64  `json:"duration_ms"`
-	FileIndex  int    `json:"file_index"`
-	Seq        int64  `json:"seq"`
-	ListenedAt int64  `json:"listened_at"`
-	DeviceID   string `json:"device_id"`
-	DeviceName string `json:"device_name"`
-	Finished   bool   `json:"finished"`
+	BookID       int64    `json:"book_id"`
+	PositionMs   int64    `json:"position_ms"`
+	DurationMs   int64    `json:"duration_ms"`
+	FileIndex    int      `json:"file_index"`
+	Seq          int64    `json:"seq"`
+	ListenedAt   int64    `json:"listened_at"`
+	DeviceID     string   `json:"device_id"`
+	DeviceName   string   `json:"device_name"`
+	Finished     bool     `json:"finished"`
+	PlaybackRate *float64 `json:"playback_rate"`
+}
+
+// Prefs is the user's server-stored playback preferences.
+type Prefs struct {
+	PlaybackRate        float64 `json:"playback_rate"`
+	SkipBackSeconds     int     `json:"skip_back_seconds"`
+	SkipForwardSeconds  int     `json:"skip_forward_seconds"`
+	AutoRewind          bool    `json:"auto_rewind"`
+	DefaultSleepMinutes int     `json:"default_sleep_minutes"`
+}
+
+// PrefsPatch is what a client sends to PUT /api/v1/me/prefs. All fields are
+// optional; a nil field leaves that preference unchanged.
+type PrefsPatch struct {
+	PlaybackRate        *float64 `json:"playback_rate,omitempty"`
+	SkipBackSeconds     *int     `json:"skip_back_seconds,omitempty"`
+	SkipForwardSeconds  *int     `json:"skip_forward_seconds,omitempty"`
+	AutoRewind          *bool    `json:"auto_rewind,omitempty"`
+	DefaultSleepMinutes *int     `json:"default_sleep_minutes,omitempty"`
+}
+
+// RateUpdate is the body of PUT /api/v1/progress/{bookId}/rate. A nil rate
+// clears the per-book override.
+type RateUpdate struct {
+	PlaybackRate *float64 `json:"playback_rate"`
 }
 
 // ProgressReport is what a client sends. listened_at is derived server-side as
@@ -107,4 +133,13 @@ type ErrorBody struct {
 
 type ErrorResponse struct {
 	Error ErrorBody `json:"error"`
+}
+
+// SeriesFacet is one distinct series with its book count and the requesting
+// user's progress across that series' books.
+type SeriesFacet struct {
+	Name            string `json:"name"`
+	BookCount       int    `json:"book_count"`
+	FinishedCount   int    `json:"finished_count"`
+	InProgressCount int    `json:"in_progress_count"`
 }

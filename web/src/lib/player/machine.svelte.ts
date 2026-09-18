@@ -17,6 +17,7 @@
 // durations + offset in the current file), in milliseconds.
 
 import type { BookDetail } from '$lib/api/types';
+import { autoRewindMs } from './autorewind';
 import { journal } from './journal';
 import { mediaSession } from './mediasession';
 
@@ -46,6 +47,7 @@ export interface PlayerEvent {
 	finished?: boolean;
 }
 
+/** Default skip amount; the live amounts are `player.skipBackMs`/`skipForwardMs`. */
 export const SKIP_MS = 30_000;
 /** Default sleep-timer fade-out. */
 export const FADE_MS = 5_000;
@@ -60,7 +62,20 @@ export class PlayerEngine {
 	fileIndex = $state(0);
 	positionMs = $state(0);
 	durationMs = $state(0);
+	/**
+	 * The rate actually applied to the element: the book's override when it has
+	 * one, otherwise `defaultRate`.
+	 */
 	rate = $state(1);
+	/** The global rate, persisted in localStorage `sk:rate`. */
+	defaultRate = $state(1);
+	/** This book's rate, from `progress.playback_rate`; null means "use the default". */
+	bookRateOverride = $state<number | null>(null);
+	/** Skip amounts for the UI buttons and the lock screen. Set from prefs. */
+	skipBackMs = $state(SKIP_MS);
+	skipForwardMs = $state(SKIP_MS);
+	/** Rewind a little when resuming after a pause. The prefs store sets this. */
+	autoRewind = $state(true);
 	error = $state<string | null>(null);
 	/** play() was refused (no gesture) or the session died; UI must offer a tap-to-resume button. */
 	needsGesture = $state(false);
@@ -88,6 +103,12 @@ export class PlayerEngine {
 	private watchdog: ReturnType<typeof setInterval> | null = null;
 	private lastJournalAt = 0;
 	private hiddenAt = 0;
+	/**
+	 * When we last actually entered `paused`, as Date.now(), for auto-rewind. Set
+	 * only where `status` becomes 'paused' — never for 'suspended', where the
+	 * position is already suspect and the listener did not choose to stop.
+	 */
+	private pausedAt = 0;
 	private listeners = new Set<(ev: PlayerEvent) => void>();
 	private installed = false;
 	private fadeTimer: ReturnType<typeof setInterval> | null = null;
@@ -181,7 +202,11 @@ export class PlayerEngine {
 			// never starting it. pause() clears wantPlaying first, so a deliberate
 			// pause at the end of a file is unaffected.
 			if (this.wantPlaying && this.atEndOfFile(a)) return;
-			if (this.status !== 'suspended') this.status = 'paused';
+			if (this.status !== 'suspended') {
+				this.status = 'paused';
+				// Auto-rewind measures from here; 'suspended' deliberately does not set it.
+				this.pausedAt = Date.now();
+			}
 			this.wantPlaying = false;
 			mediaSession.setPlaybackState('paused');
 			this.syncPosition();
@@ -233,6 +258,13 @@ export class PlayerEngine {
 		}
 		this.error = null;
 		this.status = 'loading';
+		// A pause on the book we are leaving must not rewind the one we are
+		// loading; the position here comes from the server/journal already.
+		this.pausedAt = 0;
+		// Recomputed on every load, unconditionally, so the previous book's
+		// per-book rate can never leak into this one.
+		this.bookRateOverride = book.progress?.playback_rate ?? null;
+		this.rate = this.bookRateOverride ?? this.defaultRate;
 		const { index, offsetMs } = this.locate(positionMs);
 		this.fileIndex = index;
 		this.positionMs = positionMs;
@@ -242,16 +274,27 @@ export class PlayerEngine {
 		this.emit('load');
 		if (autoplay) {
 			this.lastListenedAt = Date.now();
-			await this.play();
+			// Not the listener pressing play: no auto-rewind.
+			await this.play({ auto: true });
 		} else {
 			this.status = 'paused';
 			this.publishPosition();
 		}
 	}
 
-	async play(): Promise<void> {
+	/**
+	 * Start playback. `opts.auto` marks a start we initiated ourselves (the
+	 * autoplay inside load(), the recovery in onVisible()) rather than the
+	 * listener pressing play: those never auto-rewind, because the listener did
+	 * not stop and would not expect the position to move.
+	 */
+	async play(opts?: { auto?: boolean }): Promise<void> {
 		const a = this.ensureAudio();
 		if (!this.book) return;
+		// Consumed on every play attempt, so a failed start cannot leave a stale
+		// pause age behind to rewind twice.
+		const pausedFor = this.status === 'paused' && this.pausedAt > 0 ? Date.now() - this.pausedAt : 0;
+		this.pausedAt = 0;
 		this.lastListenedAt = Date.now();
 		// A sleep-timer fade may be in flight; starting again cancels it and
 		// restores full volume. Synchronous, so the gesture chain is untouched.
@@ -259,6 +302,11 @@ export class PlayerEngine {
 		this.wantPlaying = true;
 		if (this.status === 'ended') {
 			this.seekTo(0);
+		} else if (!opts?.auto && this.autoRewind && pausedFor > 0) {
+			const rewind = autoRewindMs(pausedFor);
+			// seekTo after wantPlaying: if the rewind crosses back over a file
+			// boundary, seekTo's existing path swaps src and starts playback itself.
+			if (rewind > 0) this.seekTo(Math.max(0, this.positionMs - rewind));
 		}
 		if (this.reloadBeforePlay) {
 			// WebKit 295518 mitigation: a stale element plays silence after reopen.
@@ -321,6 +369,10 @@ export class PlayerEngine {
 		this.reloadBeforePlay = false;
 		this.pendingSeekSec = null;
 		this.lastCurrentTime = -1;
+		this.pausedAt = 0;
+		// The next book decides its own rate; the global default stays.
+		this.bookRateOverride = null;
+		this.rate = this.defaultRate;
 		mediaSession.setBook(null);
 		mediaSession.setPlaybackState('none');
 	}
@@ -352,16 +404,44 @@ export class PlayerEngine {
 		this.seekTo(this.positionMs + deltaMs);
 	}
 
-	setRate(rate: number): void {
+	/**
+	 * Set the playback rate. Without `perBook` this is the global default: it is
+	 * persisted and becomes the effective rate unless this book has an override.
+	 * With `perBook` it sets this book's override only; the UI is responsible for
+	 * PUTting it to the server (the engine never talks to the network).
+	 */
+	setRate(rate: number, opts?: { perBook?: boolean }): void {
 		rate = Math.min(3, Math.max(0.5, rate));
-		this.rate = rate;
-		if (this.audio) this.audio.playbackRate = rate;
-		try {
-			localStorage.setItem('sk:rate', String(rate));
-		} catch {
-			/* ignore */
+		if (opts?.perBook) {
+			this.bookRateOverride = rate;
+			this.applyRate(rate);
+		} else {
+			this.defaultRate = rate;
+			try {
+				localStorage.setItem('sk:rate', String(rate));
+			} catch {
+				/* ignore */
+			}
+			if (this.bookRateOverride === null) this.applyRate(rate);
 		}
 		this.emit('ratechange');
+	}
+
+	/** Drop this book's rate override and fall back to the global default. */
+	clearBookRate(): void {
+		this.bookRateOverride = null;
+		this.applyRate(this.defaultRate);
+		this.emit('ratechange');
+	}
+
+	/**
+	 * Skip amounts for the UI buttons and, through the media session, the lock
+	 * screen (iOS sends no seekOffset, so it needs the number up front).
+	 */
+	setSkipAmounts(backMs: number, forwardMs: number): void {
+		if (backMs > 0) this.skipBackMs = backMs;
+		if (forwardMs > 0) this.skipForwardMs = forwardMs;
+		mediaSession.setSkipAmounts(this.skipBackMs, this.skipForwardMs);
 	}
 
 	prevChapter(): void {
@@ -459,11 +539,14 @@ export class PlayerEngine {
 		this.emit('finished', finished);
 	}
 
-	/** Restore the persisted playback rate (call once at startup). */
+	/** Restore the persisted global playback rate (call once at startup). */
 	restoreRate(): void {
 		try {
 			const r = Number(localStorage.getItem('sk:rate'));
-			if (r >= 0.5 && r <= 3) this.rate = r;
+			if (r >= 0.5 && r <= 3) {
+				this.defaultRate = r;
+				if (this.bookRateOverride === null) this.applyRate(r);
+			}
 		} catch {
 			/* ignore */
 		}
@@ -474,6 +557,12 @@ export class PlayerEngine {
 	}
 
 	// --- internals ---
+
+	/** Put an effective rate on the state and, if it exists, the element. */
+	private applyRate(rate: number): void {
+		this.rate = rate;
+		if (this.audio) this.audio.playbackRate = rate;
+	}
 
 	/**
 	 * True when this element is sitting at the end of its file: `ended` is set
@@ -603,8 +692,9 @@ export class PlayerEngine {
 		if (this.wantPlaying && (a.paused || a.ended)) {
 			// We meant to be playing but are not: either the file ended in the
 			// background (WebKit 261858) or the session died. Try once, silently;
-			// if iOS refuses, needsGesture shows the tap-to-resume button.
-			void this.play();
+			// if iOS refuses, needsGesture shows the tap-to-resume button. Not a
+			// listener-initiated start, so it must not rewind.
+			void this.play({ auto: true });
 		}
 	}
 }

@@ -404,3 +404,78 @@ func TestListProgressSince(t *testing.T) {
 		t.Errorf("published %d progress events, want 2", n)
 	}
 }
+
+func TestPutProgressRate(t *testing.T) {
+	f := newProgressFixture(t)
+
+	res := f.call(t, f.srv.putProgressRate, http.MethodPut, "/api/v1/progress/1/rate", f.books[0],
+		RateUpdate{PlaybackRate: float64Ptr(1.5)})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	got := decodeProgress(t, res)
+	if got.PlaybackRate == nil || *got.PlaybackRate != 1.5 {
+		t.Fatalf("playback_rate = %v, want 1.5", got.PlaybackRate)
+	}
+	if got.PositionMs != 0 || got.Finished {
+		t.Fatalf("fresh row = %+v, want position 0, not finished", got)
+	}
+
+	// A subsequent GET reflects the same rate.
+	res = f.call(t, f.srv.getProgress, http.MethodGet, "/api/v1/progress/1", f.books[0], nil)
+	if got := decodeProgress(t, res); got.PlaybackRate == nil || *got.PlaybackRate != 1.5 {
+		t.Fatalf("get playback_rate = %v, want 1.5", got.PlaybackRate)
+	}
+
+	// A real listen report must not reset the rate.
+	res = f.call(t, f.srv.putProgress, http.MethodPut, "/api/v1/progress/1", f.books[0],
+		ProgressReport{PositionMs: 9_000, ClientListenedAt: 100, ClientNow: 100})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("report status = %d, want 200", res.StatusCode)
+	}
+	if got := decodeProgress(t, res); got.PlaybackRate == nil || *got.PlaybackRate != 1.5 {
+		t.Fatalf("playback_rate after report = %v, want preserved 1.5", got.PlaybackRate)
+	}
+
+	// A null body clears it, leaving the position untouched.
+	res = f.call(t, f.srv.putProgressRate, http.MethodPut, "/api/v1/progress/1/rate", f.books[0],
+		RateUpdate{PlaybackRate: nil})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200", res.StatusCode)
+	}
+	got = decodeProgress(t, res)
+	if got.PlaybackRate != nil {
+		t.Fatalf("playback_rate after clear = %v, want nil", got.PlaybackRate)
+	}
+	if got.PositionMs != 9_000 {
+		t.Fatalf("position after clear = %d, want 9000 (untouched)", got.PositionMs)
+	}
+}
+
+func TestPutProgressRateErrors(t *testing.T) {
+	f := newProgressFixture(t)
+
+	res := f.call(t, f.srv.putProgressRate, http.MethodPut, "/api/v1/progress/1/rate", f.books[0],
+		RateUpdate{PlaybackRate: float64Ptr(0.4)})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("low rate status = %d, want 400", res.StatusCode)
+	}
+	if code := decodeProgressErr(t, res).Code; code != "bad_request" {
+		t.Fatalf("low rate error code = %q, want bad_request", code)
+	}
+
+	res = f.call(t, f.srv.putProgressRate, http.MethodPut, "/api/v1/progress/1/rate", f.books[0],
+		RateUpdate{PlaybackRate: float64Ptr(3.1)})
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("high rate status = %d, want 400", res.StatusCode)
+	}
+
+	res = f.call(t, f.srv.putProgressRate, http.MethodPut, "/api/v1/progress/1/rate", 987654,
+		RateUpdate{PlaybackRate: float64Ptr(1.0)})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown book status = %d, want 404", res.StatusCode)
+	}
+	if code := decodeProgressErr(t, res).Code; code != "not_found" {
+		t.Fatalf("unknown book error code = %q, want not_found", code)
+	}
+}

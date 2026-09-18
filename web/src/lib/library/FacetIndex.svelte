@@ -1,4 +1,5 @@
-<script lang="ts">
+<script lang="ts" generics="T extends Facet">
+	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Facet } from '$lib/api/types';
@@ -9,18 +10,20 @@
 
 	interface Props {
 		title: string;
-		/** API path returning `Facet[]`. */
+		/** API path returning `T[]` (a `Facet[]` subtype). */
 		endpoint: string;
 		/** Route segment the entries link into. */
 		base: 'authors' | 'series' | 'narrators';
 		icon: IconName;
 		/** Plural noun used in the empty state, e.g. "authors". */
 		noun: string;
+		/** Optional extra per-item content rendered after the count, e.g. a progress badge. */
+		detail?: Snippet<[T]>;
 	}
 
-	let { title, endpoint, base, icon, noun }: Props = $props();
+	let { title, endpoint, base, icon, noun, detail }: Props = $props();
 
-	let items = $state<Facet[]>([]);
+	let items = $state<T[]>([]);
 	let filter = $state('');
 	let loading = $state(true);
 	let error = $state('');
@@ -32,7 +35,7 @@
 	});
 
 	const sections = $derived.by(() => {
-		const map = new Map<string, Facet[]>();
+		const map = new Map<string, T[]>();
 		for (const f of shown) {
 			const l = letterOf(f.name);
 			const bucket = map.get(l);
@@ -55,7 +58,7 @@
 		loading = true;
 		error = '';
 		try {
-			items = await api.get<Facet[]>(endpoint);
+			items = await api.get<T[]>(endpoint);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load';
 		} finally {
@@ -121,6 +124,7 @@
 							<Icon name={icon} size={16} class="row-icon" />
 							<span class="name">{f.name}</span>
 							<span class="count">{f.book_count}</span>
+							{#if detail}<span class="detail">{@render detail(f)}</span>{/if}
 						</a>
 					</li>
 				{/each}
@@ -138,6 +142,11 @@
 		font-size: 0.9rem;
 	}
 	:global(.facet-list .row-icon) {
+		color: var(--fg-muted);
+	}
+	.detail {
+		margin-left: 0.5rem;
+		font-size: 0.8rem;
 		color: var(--fg-muted);
 	}
 </style>

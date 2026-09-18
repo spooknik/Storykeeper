@@ -1,7 +1,12 @@
 // Lock-screen / hardware controls via the Media Session API. On iOS these are
 // the only controls the listener has while the phone is locked, and the skip
 // buttons are what people actually use for audiobooks, so seekbackward and
-// seekforward are mapped to ±30 s rather than previous/next track.
+// seekforward are mapped to a skip amount rather than previous/next track.
+//
+// iOS never sends `details.seekOffset`, so the amount has to come from here.
+// The engine pushes the user's configured amounts in with setSkipAmounts(); the
+// handlers read the module state at call time, so changing them later takes
+// effect without re-installing handlers.
 
 import type { BookDetail } from '$lib/api/types';
 
@@ -15,6 +20,9 @@ export interface MediaSessionActions {
 }
 
 const SKIP_MS = 30_000;
+
+let skipBackMs = SKIP_MS;
+let skipForwardMs = SKIP_MS;
 
 function coverArtwork(book: BookDetail): MediaImage[] {
 	if (!book.cover_url) return [];
@@ -66,14 +74,23 @@ export const mediaSession = {
 		};
 		set('play', () => a.play());
 		set('pause', () => a.pause());
-		set('seekbackward', (d) => a.skip(-((d.seekOffset ?? SKIP_MS / 1000) * 1000)));
-		set('seekforward', (d) => a.skip((d.seekOffset ?? SKIP_MS / 1000) * 1000));
+		set('seekbackward', (d) => a.skip(-((d.seekOffset ?? skipBackMs / 1000) * 1000)));
+		set('seekforward', (d) => a.skip((d.seekOffset ?? skipForwardMs / 1000) * 1000));
 		set('seekto', (d) => {
 			if (typeof d.seekTime === 'number') a.seekTo(d.seekTime * 1000);
 		});
 		set('previoustrack', () => a.prevChapter());
 		set('nexttrack', () => a.nextChapter());
 		set('stop', () => a.pause());
+	},
+
+	/**
+	 * The amounts the lock-screen skip buttons use when the platform does not
+	 * tell us one (iOS). Called by the engine's setSkipAmounts().
+	 */
+	setSkipAmounts(backMs: number, forwardMs: number): void {
+		if (backMs > 0) skipBackMs = backMs;
+		if (forwardMs > 0) skipForwardMs = forwardMs;
 	},
 
 	setPlaybackState(state: 'playing' | 'paused' | 'none'): void {

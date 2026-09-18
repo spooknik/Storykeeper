@@ -1,18 +1,21 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { auth } from '$lib/auth.svelte';
 	import { player } from '$lib/player/machine.svelte';
+	import { installPlayerShortcuts } from '$lib/keys';
 	import { Reporter } from '$lib/player/reporter';
 	import { events } from '$lib/events.svelte';
 	import { journal } from '$lib/player/journal';
+	import { prefs } from '$lib/player/prefs.svelte';
 	import { startPosition } from '$lib/player/resume';
 	import { api } from '$lib/api/client';
 	import type { BookDetail } from '$lib/api/types';
 	import Player from '$lib/components/Player.svelte';
 	import Nav from '$lib/components/Nav.svelte';
+	import TabBar from '$lib/components/TabBar.svelte';
 
 	let { children } = $props();
 	let reporter: Reporter | null = null;
@@ -25,11 +28,22 @@
 	 * user can never land in another user's player.
 	 */
 	let sessionToken = 0;
+	/**
+	 * onMount here is async, so it cannot use Svelte's synchronous
+	 * "return a function to clean it up" convention; removed from onDestroy
+	 * instead.
+	 */
+	let removeShortcuts: (() => void) | null = null;
 
 	onMount(async () => {
 		player.install();
 		player.restoreRate();
+		removeShortcuts = installPlayerShortcuts();
 		await auth.load();
+	});
+
+	onDestroy(() => {
+		removeShortcuts?.();
 	});
 
 	$effect(() => {
@@ -58,6 +72,7 @@
 		events.progress = {};
 		player.unload();
 		player.userId = 0;
+		prefs.reset();
 		wiredUserId = 0;
 	}
 
@@ -72,6 +87,9 @@
 		wiredUserId = user.id;
 		const token = sessionToken;
 		player.userId = user.id;
+		// Server-side preferences (speed, skips, auto-rewind); localStorage
+		// already restored the speed above, so the engine is usable before this lands.
+		void prefs.load();
 		const r = new Reporter(
 			player,
 			() => auth.session?.csrf_token ?? '',
@@ -121,6 +139,7 @@
 {:else}
 	{#if auth.user}
 		<Nav />
+		<TabBar />
 	{/if}
 	{@render children()}
 	{#if auth.user}

@@ -23,7 +23,8 @@ test('seeded progress surfaces in the UI and an older listen is refused', async 
 			file_index: 0,
 			client_listened_at: now,
 			client_now: now,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(seed.status(), await seed.text()).toBe(200);
@@ -45,7 +46,8 @@ test('seeded progress surfaces in the UI and an older listen is refused', async 
 			file_index: 0,
 			client_listened_at: older - 60 * 60 * 1000,
 			client_now: older,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(stale.status(), await stale.text()).toBe(409);
@@ -65,7 +67,8 @@ test('a report describing an old listen loses to a newer one', async ({ page }) 
 			file_index: 0,
 			client_listened_at: now,
 			client_now: now,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(seed.status(), await seed.text()).toBe(200);
@@ -80,7 +83,8 @@ test('a report describing an old listen loses to a newer one', async ({ page }) 
 			file_index: 0,
 			client_listened_at: late - 2 * 60 * 60 * 1000,
 			client_now: late,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(stale.status(), await stale.text()).toBe(409);
@@ -117,7 +121,8 @@ test('the hide report from a paused player cannot clobber a newer listen', async
 			file_index: 1,
 			client_listened_at: other,
 			client_now: other,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(newer.status(), await newer.text()).toBe(200);
@@ -147,7 +152,8 @@ test('a journal entry the server refuses stops being the resume position', async
 			file_index: 0,
 			client_listened_at: now,
 			client_now: now,
-			base_seq: 0
+			base_seq: 0,
+			finished: false
 		}
 	});
 	expect(seed.status(), await seed.text()).toBe(200);

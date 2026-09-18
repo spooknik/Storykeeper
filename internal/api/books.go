@@ -69,8 +69,13 @@ func scanBookRow(sc interface{ Scan(...any) error }) (*bookRow, error) {
 	return &b, nil
 }
 
-// inProgressCond matches books the user has started but not finished.
-const inProgressCond = "p.position_ms IS NOT NULL AND p.finished = 0"
+// inProgressCond matches books the user has started but not finished. A row
+// at position 0 is not a listen: setting a per-book rate creates one before
+// the first play, and that must not put the book on the continue shelf.
+const inProgressCond = "p.position_ms > 0 AND p.finished = 0"
+
+// notStartedCond is the complement: no row, or a row nothing has been heard on.
+const notStartedCond = "(p.position_ms IS NULL OR (p.position_ms = 0 AND p.finished = 0))"
 
 // jsonArrayHas matches an exact, case-insensitive member of a JSON array column.
 func jsonArrayHas(col string) string {
@@ -162,7 +167,7 @@ func (s *Server) listBooks(w http.ResponseWriter, r *http.Request) {
 		conds = append(conds, inProgressCond)
 	}
 	if q.Get("not_started") == "1" {
-		conds = append(conds, "p.position_ms IS NULL")
+		conds = append(conds, notStartedCond)
 	}
 	order := orderClause(q.Get("sort"), q.Get("dir"))
 	limit := queryInt(r, "limit", 100)

@@ -12,6 +12,7 @@
 	--danger: #e06c6c;
 	--radius: 10px;
 	--player-height: 88px;
+	--tabbar-height: 0px;
 	--safe-bottom: env(safe-area-inset-bottom, 0px);
 	--safe-top: env(safe-area-inset-top, 0px);
 }
@@ -96,6 +97,15 @@ select {
 	padding: calc(var(--safe-top) + 1rem) 1rem calc(var(--player-height) + var(--safe-bottom) + 1.5rem);
 	max-width: 1100px;
 	margin: 0 auto;
+}
+
+/* Below this the tab bar replaces Nav and owns the safe-area inset itself
+   (--tabbar-height already includes it), so the page adds the bar's height
+   instead of a second --safe-bottom. */
+@media (max-width: 560px) {
+	.page {
+		padding-bottom: calc(var(--player-height) + var(--tabbar-height) + 1.5rem);
+	}
 }
 
 .topbar {

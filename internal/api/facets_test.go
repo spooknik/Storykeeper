@@ -119,3 +119,59 @@ func TestFacets_EmptyIsArrayNotNull(t *testing.T) {
 		})
 	}
 }
+
+// seriesFacetsAs calls listSeries and decodes the []SeriesFacet response.
+func seriesFacetsAs(t *testing.T, s *Server, u *auth.User) []SeriesFacet {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.listSeries(w, reqAs(http.MethodGet, "/api/v1/series", nil, u, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/series status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var out []SeriesFacet
+	decodeBody(t, w, &out)
+	return out
+}
+
+func TestListSeries_ProgressCounts(t *testing.T) {
+	f := newBookFixture(t)
+
+	// reader: Alpha One (Chronicles #1) in progress, Beta Two (Chronicles #2)
+	// finished, Gamma Ten (Chronicles #10) not started; Other Series untouched.
+	series := seriesFacetsAs(t, f.s, f.reader)
+	want := []SeriesFacet{
+		{Name: "Chronicles", BookCount: 3, FinishedCount: 1, InProgressCount: 1},
+		{Name: "Other Series", BookCount: 1, FinishedCount: 0, InProgressCount: 0},
+	}
+	if !reflect.DeepEqual(series, want) {
+		t.Fatalf("series = %+v, want %+v", series, want)
+	}
+}
+
+func TestListSeries_RestrictedLibraryHiddenFromNonAdmin(t *testing.T) {
+	f := newBookFixture(t)
+
+	reader := seriesFacetsAs(t, f.s, f.reader)
+	for _, sf := range reader {
+		if sf.Name == "Secret Series" {
+			t.Fatalf("non-admin saw %q in %+v", "Secret Series", reader)
+		}
+	}
+
+	admin := seriesFacetsAs(t, f.s, f.admin)
+	found := false
+	for _, sf := range admin {
+		if sf.Name == "Secret Series" {
+			found = true
+			if sf.BookCount != 1 {
+				t.Fatalf("Secret Series book_count = %d, want 1", sf.BookCount)
+			}
+			if sf.FinishedCount != 0 || sf.InProgressCount != 0 {
+				t.Fatalf("Secret Series counts = %+v, want zero progress", sf)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("admin did not see %q in %+v", "Secret Series", admin)
+	}
+}

@@ -364,3 +364,93 @@ func TestPruneDropsOldLogRows(t *testing.T) {
 		t.Fatalf("old progress_log rows = %d, want 0", n)
 	}
 }
+
+func float64Ptr(f float64) *float64 { return &f }
+
+func TestSetPlaybackRateCreatesRowWhenAbsent(t *testing.T) {
+	st, userID, books := newTestStore(t)
+	ctx := context.Background()
+
+	rec, err := st.SetPlaybackRate(ctx, userID, books[0], float64Ptr(1.5))
+	if err != nil {
+		t.Fatalf("set rate: %v", err)
+	}
+	if rec.PlaybackRate == nil || *rec.PlaybackRate != 1.5 {
+		t.Fatalf("playback_rate = %v, want 1.5", rec.PlaybackRate)
+	}
+	if rec.PositionMs != 0 || rec.Finished {
+		t.Fatalf("fresh row = %+v, want position 0, not finished", rec)
+	}
+	if rec.Seq != 0 || rec.ListenedAt != 0 {
+		t.Fatalf("fresh row seq/listened_at = %d/%d, want 0/0 (no fabricated listen)", rec.Seq, rec.ListenedAt)
+	}
+
+	got, err := st.Get(ctx, userID, books[0])
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil || got.PlaybackRate == nil || *got.PlaybackRate != 1.5 {
+		t.Fatalf("stored record = %+v, want playback_rate 1.5", got)
+	}
+}
+
+func TestSetPlaybackRateUnknownBook(t *testing.T) {
+	st, userID, _ := newTestStore(t)
+	_, err := st.SetPlaybackRate(context.Background(), userID, 9999, float64Ptr(1.0))
+	if !errors.Is(err, ErrNoBook) {
+		t.Fatalf("err = %v, want ErrNoBook", err)
+	}
+}
+
+func TestSetPlaybackRateLeavesExistingProgressUntouched(t *testing.T) {
+	st, userID, books := newTestStore(t)
+	ctx := context.Background()
+
+	rec, accepted, err := st.Report(ctx, ReportInput{
+		UserID: userID, BookID: books[0], PositionMs: 12_000,
+		ClientListenedAt: 0, ClientNow: 0, DeviceID: "dev", DeviceName: "iPhone", Now: base,
+	})
+	if err != nil || !accepted {
+		t.Fatalf("report: accepted=%v err=%v", accepted, err)
+	}
+	origSeq, origListenedAt := rec.PositionMs, rec.ListenedAt
+
+	updated, err := st.SetPlaybackRate(ctx, userID, books[0], float64Ptr(2.0))
+	if err != nil {
+		t.Fatalf("set rate: %v", err)
+	}
+	if updated.PlaybackRate == nil || *updated.PlaybackRate != 2.0 {
+		t.Fatalf("playback_rate = %v, want 2.0", updated.PlaybackRate)
+	}
+	if updated.PositionMs != origSeq || updated.ListenedAt != origListenedAt {
+		t.Fatalf("position/listened_at changed: got %d/%d, want %d/%d",
+			updated.PositionMs, updated.ListenedAt, origSeq, origListenedAt)
+	}
+	if updated.DeviceID != "dev" || updated.DeviceName != "iPhone" {
+		t.Fatalf("device changed: got %q/%q, want preserved dev/iPhone", updated.DeviceID, updated.DeviceName)
+	}
+
+	// A subsequent Report must not reset or touch the rate.
+	rec2, accepted, err := st.Report(ctx, ReportInput{
+		UserID: userID, BookID: books[0], PositionMs: 20_000,
+		ClientListenedAt: 0, ClientNow: 0, DeviceID: "dev", Now: base + minute,
+	})
+	if err != nil || !accepted {
+		t.Fatalf("second report: accepted=%v err=%v", accepted, err)
+	}
+	if rec2.PlaybackRate == nil || *rec2.PlaybackRate != 2.0 {
+		t.Fatalf("rate after Report = %v, want preserved 2.0", rec2.PlaybackRate)
+	}
+
+	// Clearing sets it back to nil.
+	cleared, err := st.SetPlaybackRate(ctx, userID, books[0], nil)
+	if err != nil {
+		t.Fatalf("clear rate: %v", err)
+	}
+	if cleared.PlaybackRate != nil {
+		t.Fatalf("playback_rate after clear = %v, want nil", cleared.PlaybackRate)
+	}
+	if cleared.PositionMs != 20_000 {
+		t.Fatalf("position after clear = %d, want 20000 (untouched)", cleared.PositionMs)
+	}
+}

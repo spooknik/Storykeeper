@@ -17,15 +17,16 @@ func (s *Server) progressStore() *progress.Store { return progress.New(s.DB) }
 // same JSON shape; they are separate so internal/progress never imports api.
 func toProgress(r *progress.Record) Progress {
 	return Progress{
-		BookID:     r.BookID,
-		PositionMs: r.PositionMs,
-		DurationMs: r.DurationMs,
-		FileIndex:  r.FileIndex,
-		Seq:        r.Seq,
-		ListenedAt: r.ListenedAt,
-		DeviceID:   r.DeviceID,
-		DeviceName: r.DeviceName,
-		Finished:   r.Finished,
+		BookID:       r.BookID,
+		PositionMs:   r.PositionMs,
+		DurationMs:   r.DurationMs,
+		FileIndex:    r.FileIndex,
+		Seq:          r.Seq,
+		ListenedAt:   r.ListenedAt,
+		DeviceID:     r.DeviceID,
+		DeviceName:   r.DeviceName,
+		Finished:     r.Finished,
+		PlaybackRate: r.PlaybackRate,
 	}
 }
 
@@ -135,6 +136,42 @@ func (s *Server) beaconProgress(w http.ResponseWriter, r *http.Request) {
 		s.publish(u.ID, "progress", toProgress(rec))
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// putProgressRate serves PUT /api/v1/progress/{bookId}/rate: sets or clears
+// (with a null body value) the per-book playback rate override.
+func (s *Server) putProgressRate(w http.ResponseWriter, r *http.Request) {
+	u, _ := auth.FromContext(r.Context())
+	bookID, ok := pathInt(r, "bookId")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid book id")
+		return
+	}
+	if !s.bookVisible(w, r, bookID) {
+		return
+	}
+	var req RateUpdate
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid body: "+err.Error())
+		return
+	}
+	if req.PlaybackRate != nil && (*req.PlaybackRate < 0.5 || *req.PlaybackRate > 3.0) {
+		writeError(w, http.StatusBadRequest, "bad_request", "playback_rate must be between 0.5 and 3.0")
+		return
+	}
+	rec, err := s.progressStore().SetPlaybackRate(r.Context(), u.ID, bookID, req.PlaybackRate)
+	if err != nil {
+		if errors.Is(err, progress.ErrNoBook) {
+			writeError(w, http.StatusNotFound, "not_found", "no such book")
+			return
+		}
+		s.Log.Error("set playback rate", "err", err, "user", u.ID, "book", bookID)
+		writeError(w, http.StatusInternalServerError, "internal", "could not save playback rate")
+		return
+	}
+	body := toProgress(&rec)
+	s.publish(u.ID, "progress", body)
+	writeJSON(w, http.StatusOK, body)
 }
 
 // bookVisible enforces library access for progress routes. Books in a
