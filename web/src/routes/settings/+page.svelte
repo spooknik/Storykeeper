@@ -289,6 +289,12 @@
 		border-bottom: 1px solid var(--border);
 	}
 	.badge {
+		/* Inline-block so the pill wraps as one unit onto its own line on
+		   narrow screens instead of breaking mid-pill and clipping. */
+		display: inline-block;
+		white-space: nowrap;
+		vertical-align: middle;
+		line-height: 1.4;
 		margin-left: 0.5rem;
 		font-size: 0.7rem;
 		color: var(--accent);

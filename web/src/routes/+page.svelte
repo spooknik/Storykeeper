@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, replaceState } from '$app/navigation';
+	import { searchBox } from '$lib/library/searchbox.svelte';
 	import { page } from '$app/state';
 	import { api } from '$lib/api/client';
 	import type { BookList, BookSummary } from '$lib/api/types';
@@ -55,11 +56,18 @@
 		}
 	});
 
-	// The mobile tab bar's Search tab links here with ?focus=1 so tapping it
-	// jumps straight into the search box instead of just landing on the page.
+	// The mobile tab bar focuses the box directly when this page is already
+	// showing (synchronously, so iOS opens the keyboard); from another page it
+	// navigates here with ?focus=1 and this effect finishes the job.
+	$effect(() => {
+		searchBox.el = searchInput;
+		return () => {
+			if (searchBox.el === searchInput) searchBox.el = null;
+		};
+	});
 	$effect(() => {
 		if (page.url.searchParams.get('focus') !== '1') return;
-		searchInput?.focus();
+		if (!searchBox.focus()) return; // input not mounted yet; rerun when it is
 		const url = new URL(page.url);
 		url.searchParams.delete('focus');
 		replaceState(url, {});

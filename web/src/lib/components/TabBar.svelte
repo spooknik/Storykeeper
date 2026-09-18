@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { searchBox } from '$lib/library/searchbox.svelte';
 	import { auth } from '$lib/auth.svelte';
 	import Icon from './Icon.svelte';
 	import type { IconName } from './Icon.svelte';
@@ -46,6 +47,16 @@
 		browseOpen = false;
 		void goto(href);
 	}
+
+	/**
+	 * Focus the library search box. Done synchronously when the library page is
+	 * already showing, because iOS only raises the keyboard for a focus() made
+	 * inside the tap itself; otherwise navigate there and let the page focus it.
+	 */
+	function search() {
+		if (page.url.pathname === '/' && searchBox.focus()) return;
+		void goto('/?focus=1');
+	}
 </script>
 
 <nav class="tabbar" bind:clientHeight={barHeight}>
@@ -64,10 +75,10 @@
 		<Icon name="layout-grid" size={20} />
 		<span>Browse</span>
 	</button>
-	<a class="tab" href="/?focus=1" aria-label="Search">
+	<button type="button" class="tab" onclick={search} aria-label="Search">
 		<Icon name="search" size={20} />
 		<span>Search</span>
-	</a>
+	</button>
 	<a
 		class="tab"
 		class:active={isActive('/settings')}

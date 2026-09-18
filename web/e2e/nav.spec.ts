@@ -37,11 +37,20 @@ test('the Browse tab opens a sheet listing Series and navigates to it', async ({
 test('the Search tab focuses the library search box', async ({ page }) => {
 	await page.goto('/');
 	const tabbar = page.locator('nav.tabbar');
-	await tabbar.getByRole('link', { name: 'Search' }).click();
+	await tabbar.getByRole('button', { name: 'Search' }).click();
 
 	const search = page.getByLabel('Search the library');
 	await expect(search).toBeFocused();
-	// The param is stripped after use so a reload does not refocus.
+	// Already on the library page: focused in place, no navigation.
+	await expect(page).toHaveURL(/\/$/);
+});
+
+test('the Search tab works from another page too', async ({ page }) => {
+	await page.goto('/settings');
+	await page.locator('nav.tabbar').getByRole('button', { name: 'Search' }).click();
+
+	await expect(page.getByLabel('Search the library')).toBeFocused();
+	// The ?focus=1 handoff param is stripped after use so a reload does not refocus.
 	await expect(page).toHaveURL(/\/$/);
 });
 
