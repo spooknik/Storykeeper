@@ -62,6 +62,15 @@ export const journal = {
 		return Number.isFinite(n) ? n : null;
 	},
 
+	/** Forget the last-played book, e.g. after the listener explicitly closes the player bar. */
+	clearLast(userId: number): void {
+		try {
+			localStorage.removeItem(`${LAST}${userId}`);
+		} catch {
+			/* ignore */
+		}
+	},
+
 	/** Entries not yet accepted by the server (device was offline). */
 	unsynced(userId: number): JournalEntry[] {
 		const out: JournalEntry[] = [];

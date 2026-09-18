@@ -278,6 +278,12 @@ export class PlayerEngine {
 			await this.play({ auto: true });
 		} else {
 			this.status = 'paused';
+			// A silent restore (relaunch) is not a listen. The position came from
+			// the server record, so the last listen is that record's time: any
+			// report this player sends before the listener presses play (the
+			// prefs load changes the rate, for one) must describe that old
+			// listen, or a paused phone could overwrite a newer listen elsewhere.
+			this.lastListenedAt = this.serverListenedAt;
 			this.publishPosition();
 		}
 	}
@@ -412,6 +418,7 @@ export class PlayerEngine {
 	 */
 	setRate(rate: number, opts?: { perBook?: boolean }): void {
 		rate = Math.min(3, Math.max(0.5, rate));
+		const before = this.rate;
 		if (opts?.perBook) {
 			this.bookRateOverride = rate;
 			this.applyRate(rate);
@@ -424,7 +431,9 @@ export class PlayerEngine {
 			}
 			if (this.bookRateOverride === null) this.applyRate(rate);
 		}
-		this.emit('ratechange');
+		// Only a real change is worth a report; the prefs load re-applies the
+		// same rate on every launch.
+		if (this.rate !== before) this.emit('ratechange');
 	}
 
 	/** Drop this book's rate override and fall back to the global default. */

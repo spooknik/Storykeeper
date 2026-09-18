@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { bookByTitle, CSRF } from './fixtures/api';
-import { BOOKS } from './fixtures/server';
+import { ADMIN_PASSWORD, ADMIN_USER, BOOKS } from './fixtures/server';
+import { resolveBaseURL } from './fixtures/state';
 
 const SEEDED_MS = 3_000;
 /** Positions for the staleness test; both inside the 8 s fixture book. */
@@ -129,12 +130,73 @@ test('the hide report from a paused player cannot clobber a newer listen', async
 
 	// Leaving the page fires the hide/beacon report. It describes the listen that
 	// ended before the other device's, so the server must refuse it.
+	// The relaunch also restores the paused player and loads prefs, whose rate
+	// change makes the reporter send again. That report must describe the old
+	// listen too, not "now". Wait for the restore and the prefs round trip, then
+	// give any report it triggers time to land before asking the server.
 	await page.goto('/');
 	await expect(page.getByRole('heading', { name: /library/i })).toBeVisible();
+	// The relaunch restores the paused player; give it (and anything it
+	// reports) time to settle before asking the server what stands.
+	await expect(page.getByRole('slider', { name: 'Position' })).toBeVisible({ timeout: 15_000 });
+	await page.waitForTimeout(1_000);
 
 	const after = await page.request.get(`/api/v1/progress/${book.id}`);
 	expect(after.status(), await after.text()).toBe(200);
 	expect(((await after.json()) as { position_ms: number }).position_ms).toBe(OTHER_DEVICE_MS);
+});
+
+test('a relaunched paused player does not claim a fresh listen', async ({ page, playwright }) => {
+	const book = await bookByTitle(page.request, BOOKS.multiFile.title);
+	// Another device: its own session, so its writes carry a different device id.
+	const other = await playwright.request.newContext({ baseURL: resolveBaseURL() });
+	const login = await other.post('/api/v1/auth/login', {
+		headers: CSRF,
+		data: { username: ADMIN_USER, password: ADMIN_PASSWORD, device_name: 'Other device' }
+	});
+	expect(login.status(), await login.text()).toBe(200);
+	// This device never hears about the other one while the page is open.
+	await page.route('**/api/v1/events', (route) => route.abort());
+
+	// Listen for a moment here, then stop.
+	await page.goto(`/book/${book.id}`);
+	await page.getByRole('button', { name: /play|resume/i }).first().click();
+	const pauseButton = page.getByRole('button', { name: 'Pause', exact: true }).last();
+	await expect(pauseButton).toBeVisible({ timeout: 15_000 });
+	await pauseButton.click();
+	await expect(page.getByRole('button', { name: 'Play', exact: true }).last()).toBeVisible();
+	await page.waitForTimeout(3_000);
+
+	// The other device listens further along.
+	const otherAt = Date.now();
+	const newer = await other.put(`/api/v1/progress/${book.id}`, {
+		headers: CSRF,
+		data: {
+			position_ms: OTHER_DEVICE_MS,
+			file_index: 1,
+			client_listened_at: otherAt,
+			client_now: otherAt,
+			base_seq: 0,
+			finished: false
+		}
+	});
+	expect(newer.status(), await newer.text()).toBe(200);
+	await page.waitForTimeout(2_000);
+
+	// Relaunch. The player is restored paused, and loading prefs makes it
+	// report. That report must describe the old listen, never the relaunch.
+	const reported = page.waitForRequest(
+		(r) => r.method() === 'PUT' && r.url().includes(`/api/v1/progress/${book.id}`)
+	);
+	await page.goto('/');
+	await expect(page.getByRole('slider', { name: 'Position' })).toBeVisible({ timeout: 15_000 });
+	await page.keyboard.press(']'); // a rate change is reported immediately
+	const body = (await reported).postDataJSON() as { client_listened_at: number; client_now: number };
+	expect(body.client_now - body.client_listened_at).toBeGreaterThan(1_500);
+
+	const after = await page.request.get(`/api/v1/progress/${book.id}`);
+	expect(((await after.json()) as { position_ms: number }).position_ms).toBe(OTHER_DEVICE_MS);
+	await other.dispose();
 });
 
 test('a journal entry the server refuses stops being the resume position', async ({ page }) => {

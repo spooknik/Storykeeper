@@ -10,7 +10,7 @@
 	import { events } from '$lib/events.svelte';
 	import { journal } from '$lib/player/journal';
 	import { prefs } from '$lib/player/prefs.svelte';
-	import { startPosition } from '$lib/player/resume';
+	import { startState } from '$lib/player/resume';
 	import { api } from '$lib/api/client';
 	import type { BookDetail } from '$lib/api/types';
 	import Player from '$lib/components/Player.svelte';
@@ -125,7 +125,12 @@
 				player.serverSeq = book.progress.seq;
 				player.serverListenedAt = book.progress.listened_at;
 			}
-			await player.load(book, startPosition(userId, book), false);
+			const start = startState(userId, book);
+			await player.load(book, start.positionMs, false);
+			// The restore is silent: whatever this player reports before the
+			// listener presses play must describe the listen the position came
+			// from, not the relaunch.
+			if (start.listenedAt > 0) player.lastListenedAt = start.listenedAt;
 			// The session can end while the book is being fetched or loaded.
 			if (token !== sessionToken) player.unload();
 		} catch {
