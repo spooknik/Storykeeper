@@ -26,6 +26,7 @@ export default defineConfig({
 			kit: {
 				adapterFallback: 'index.html'
 			},
+			includeAssets: ['favicon.ico', 'favicon-32.png'],
 			manifest: {
 				name: 'Storykeeper',
 				short_name: 'Storykeeper',
