@@ -12,6 +12,14 @@
 //     one-tap resume.
 //   - Lock-screen pause > ~30 s kills the audio session. The stall watchdog
 //     moves us to `suspended` and the UI shows "Tap to resume".
+//   - iOS reclaims the media process of a backgrounded page. WebKit then
+//     silently re-runs the load algorithm on the element: readyState drops to
+//     HAVE_NOTHING, `emptied` fires, and currentTime reads 0 until a seek it
+//     queues lands. That 0 is not a position. We never read currentTime from
+//     an element that has no metadata, and an `emptied` we did not cause marks
+//     the element stale until we re-assign src ourselves. A play() that never
+//     reaches `playing` (the same dead pipeline, from the lock screen) is
+//     surfaced as `suspended` instead of waiting forever.
 //
 // Positions are on the book's virtual timeline (sum of preceding file
 // durations + offset in the current file), in milliseconds.
@@ -55,6 +63,12 @@ const FADE_STEP_MS = 100;
 const JOURNAL_EVERY_MS = 5_000;
 const STALL_AFTER_MS = 4_000;
 const WATCHDOG_MS = 2_000;
+/**
+ * How long a play() may go without a `playing` event before we call the
+ * pipeline dead. Generous, because a cold element fetches the file first; a
+ * late `playing` still recovers the state on its own.
+ */
+const PLAY_TIMEOUT_MS = 10_000;
 
 export class PlayerEngine {
 	status = $state<PlayerStatus>('idle');
@@ -112,6 +126,20 @@ export class PlayerEngine {
 	private listeners = new Set<(ev: PlayerEvent) => void>();
 	private installed = false;
 	private fadeTimer: ReturnType<typeof setInterval> | null = null;
+	/**
+	 * Set by our own src changes: the `emptied` they queue is ours. Cleared when
+	 * that load reaches metadata, so a later `emptied` is known to be WebKit
+	 * resetting the element behind our back.
+	 */
+	private expectEmptied = false;
+	/**
+	 * The element lost its media without us asking (see the header). Its
+	 * currentTime describes nothing until setSrc() gives it a file again, so
+	 * position reads are skipped and the tracked positionMs stands.
+	 */
+	private positionStale = false;
+	/** Pending "did play() actually start?" check; see PLAY_TIMEOUT_MS. */
+	private playTimer: ReturnType<typeof setTimeout> | null = null;
 
 	readonly currentChapter = $derived.by(() => {
 		const b = this.book;
@@ -176,12 +204,22 @@ export class PlayerEngine {
 		a.setAttribute('playsinline', '');
 		(a as unknown as { preservesPitch?: boolean }).preservesPitch = true;
 		a.addEventListener('loadedmetadata', () => {
+			// Our load got this far, so any `emptied` it owed has been fired.
+			this.expectEmptied = false;
 			if (this.pendingSeekSec !== null && Math.abs(a.currentTime - this.pendingSeekSec) > 0.5) {
 				a.currentTime = this.pendingSeekSec;
 			}
 			this.pendingSeekSec = null;
 		});
+		a.addEventListener('emptied', () => {
+			// Browsers queue zero, one or two of these for a single src change,
+			// so the flag is not consumed here: everything before our load
+			// reaches metadata is ours.
+			if (this.expectEmptied) return;
+			this.onElementReset();
+		});
 		a.addEventListener('playing', () => {
+			this.clearPlayTimer();
 			this.status = 'playing';
 			this.lastListenedAt = Date.now();
 			this.needsGesture = false;
@@ -319,11 +357,15 @@ export class PlayerEngine {
 			this.reloadBeforePlay = false;
 			this.setSrc(this.fileIndex, this.positionMs - (this.fileStarts[this.fileIndex] ?? 0));
 		}
+		// Armed before the await: on a dead pipeline play() never settles, and
+		// nothing else would ever notice. `playing` disarms it.
+		this.armPlayTimer();
 		try {
 			await a.play();
 			this.needsGesture = false;
 		} catch (e) {
 			// NotAllowedError: iOS wants a fresh gesture. Surface a tap-to-resume.
+			this.clearPlayTimer();
 			this.needsGesture = true;
 			this.status = 'suspended';
 			this.emit('stall');
@@ -332,6 +374,7 @@ export class PlayerEngine {
 	}
 
 	pause(): void {
+		this.clearPlayTimer();
 		this.wantPlaying = false;
 		this.audio?.pause();
 	}
@@ -351,6 +394,7 @@ export class PlayerEngine {
 	 */
 	unload(): void {
 		this.cancelFade();
+		this.clearPlayTimer();
 		this.wantPlaying = false;
 		// book first: emit() and writeJournal() both no-op without one, so the
 		// async `pause` event this triggers stays silent.
@@ -358,9 +402,11 @@ export class PlayerEngine {
 		const a = this.audio;
 		if (a) {
 			a.pause();
+			this.expectEmptied = true;
 			a.removeAttribute('src');
 			a.load();
 		}
+		this.positionStale = false;
 		this.fileStarts = [];
 		this.fileIndex = 0;
 		this.positionMs = 0;
@@ -393,7 +439,8 @@ export class PlayerEngine {
 		// Position first: anything that reports to the server on the events
 		// below must see the new position, never the one we are leaving.
 		this.positionMs = bookMs;
-		if (index !== this.fileIndex) {
+		// A stale element has no media to seek within: give it the file again.
+		if (index !== this.fileIndex || this.positionStale) {
 			this.fileIndex = index;
 			this.setSrc(index, offsetMs);
 			if (this.wantPlaying) void this.audio.play().catch(() => (this.needsGesture = true));
@@ -599,17 +646,70 @@ export class PlayerEngine {
 		if (!a || !f) return;
 		const sec = Math.max(0, offsetMs / 1000);
 		this.pendingSeekSec = sec;
+		// This load is ours, and it gives a reset element its media back.
+		this.expectEmptied = true;
+		this.positionStale = false;
 		// Media fragment gives Safari the start time before it decides how much to buffer.
 		a.src = `${f.url}#t=${sec.toFixed(3)}`;
 		a.load();
 		a.playbackRate = this.rate;
 	}
 
+	/**
+	 * Pull the position from the element. Only when the element can actually
+	 * vouch for it: before metadata (a fresh src, or WebKit's reset after the
+	 * media process died) currentTime is 0 regardless of where the listener is,
+	 * and writing that through would erase their place in the journal and, with
+	 * a fresh timestamp, on the server too. The tracked positionMs stands.
+	 */
 	private syncPosition(): void {
 		const a = this.audio;
 		if (!a) return;
-		this.positionMs = (this.fileStarts[this.fileIndex] ?? 0) + a.currentTime * 1000;
+		if (!this.positionStale && a.readyState >= HTMLMediaElement.HAVE_METADATA) {
+			this.positionMs = (this.fileStarts[this.fileIndex] ?? 0) + a.currentTime * 1000;
+		}
 		this.publishPosition();
+	}
+
+	/**
+	 * WebKit emptied the element without us asking: the media process was
+	 * reclaimed and the element is being reloaded from scratch. Its position is
+	 * meaningless until setSrc() runs again, and anything that was playing has
+	 * stopped without a `pause` event, so say so.
+	 */
+	private onElementReset(): void {
+		if (!this.book) return;
+		this.positionStale = true;
+		this.pendingSeekSec = null;
+		this.reloadBeforePlay = true;
+		this.clearPlayTimer();
+		if (this.status === 'playing' || this.status === 'loading') {
+			this.status = 'suspended';
+			this.needsGesture = true;
+			mediaSession.setPlaybackState('paused');
+			this.writeJournal(false);
+			this.emit('stall');
+		}
+	}
+
+	private armPlayTimer(): void {
+		this.clearPlayTimer();
+		this.playTimer = setTimeout(() => {
+			this.playTimer = null;
+			if (!this.book || !this.wantPlaying || this.status === 'playing') return;
+			// play() was accepted and nothing happened: the pipeline is gone.
+			// A fresh src on the next attempt is the only thing that revives it.
+			this.reloadBeforePlay = true;
+			this.status = 'suspended';
+			this.needsGesture = true;
+			this.writeJournal(false);
+			this.emit('stall');
+		}, PLAY_TIMEOUT_MS);
+	}
+
+	private clearPlayTimer(): void {
+		if (this.playTimer) clearTimeout(this.playTimer);
+		this.playTimer = null;
 	}
 
 	private publishPosition(): void {
