@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#111111">
+  <link rel="manifest" href="./ios-resume.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>iOS resume test</title>
+  <style>
+    :root { color-scheme: dark; font: 17px system-ui, sans-serif; background: #111; color: #eee; }
+    body { max-width: 42rem; margin: auto; padding: 1.2rem; }
+    button, select { font: inherit; padding: .7rem; margin: .3rem 0; }
+    select { display: block; width: 100%; }
+    button { min-height: 44px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+    p { line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <h1>iOS resume test</h1>
+  <p>This experiment plays a quiet repeating tone. It does not open a book or save listening progress.
+    Stop other playback before starting. The silent-track modes may use extra battery.</p>
+  <label for="mode">What happens when you pause</label>
+  <select id="mode">
+    <option value="baseline">Normal pause (baseline)</option>
+    <option value="silent">Silent file, unmuted, volume 1</option>
+    <option value="zero">Silent file, volume 0 (comparison)</option>
+  </select>
+  <p>Choose a mode and tap Start. Lock the phone, pause with AirPods, wait five minutes,
+    then press AirPods play. Listen for the tone before reopening this page.
+    Repeat each mode separately. Silence ends after ten minutes of media playback.</p>
+  <button id="start">Start tone</button>
+  <button id="pause" disabled>Pause</button>
+  <button id="stop" disabled>Stop test</button>
+  <p id="status" role="status">Stopped</p>
+  <button id="download">Download log</button>
+  <button id="clear">Clear log</button>
+  <p>The log stays on this device across reloads. A missing remote event alone does not prove why
+    iOS stopped routing commands; record whether Music opened and whether Now Playing disappeared.</p>
+  <pre id="log"></pre>
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    const key = 'sk:diagnostics:ios-resume:v1';
+    let entries = [];
+    try { entries = JSON.parse(localStorage.getItem(key) || '[]'); } catch {}
+    if (!Array.isArray(entries)) entries = [];
+    let audio;
+    let phase = 'stopped';
+    let mode = 'baseline';
+    let attempt = 0;
+    let pausedAt = 0;
+    let lastTick = 0;
+    const pageId = Date.now().toString(36);
+
+    function log(event, extra = {}) {
+      entries.push({ at: new Date().toISOString(), pageId, event, phase, mode,
+        visibility: document.visibilityState,
+        session: navigator.audioSession?.state ?? 'unsupported',
+        playbackState: navigator.mediaSession?.playbackState ?? 'unsupported',
+        media: audio ? { time: audio.currentTime, paused: audio.paused,
+          ready: audio.readyState, volume: audio.volume, muted: audio.muted } : null,
+        ...extra });
+      entries = entries.slice(-600);
+      try { localStorage.setItem(key, JSON.stringify(entries)); } catch {}
+      $('log').textContent = entries.slice(-50).map((entry) => JSON.stringify(entry)).join('\n');
+    }
+
+    // PCM silence, not a muted oscillator: compare the media element's volume
+    // policies while keeping the file's samples identical. No Web Audio dependency.
+    function wav(seconds, tone) {
+      const rate = 8000;
+      const count = seconds * rate;
+      const bytes = new ArrayBuffer(44 + count * 2);
+      const data = new DataView(bytes);
+      const word = (offset, value) => {
+        for (let i = 0; i < value.length; i++) data.setUint8(offset + i, value.charCodeAt(i));
+      };
+      word(0, 'RIFF'); data.setUint32(4, 36 + count * 2, true); word(8, 'WAVE');
+      word(12, 'fmt '); data.setUint32(16, 16, true); data.setUint16(20, 1, true);
+      data.setUint16(22, 1, true); data.setUint32(24, rate, true);
+      data.setUint32(28, rate * 2, true); data.setUint16(32, 2, true);
+      data.setUint16(34, 16, true); word(36, 'data'); data.setUint32(40, count * 2, true);
+      if (tone) {
+        for (let i = 0; i < count; i++) {
+          const t = (i % (rate * 2)) / rate;
+          const envelope = t < .3 ? Math.sin(Math.PI * t / .3) ** 2 : 0;
+          data.setInt16(44 + i * 2, Math.round(1600 * envelope * Math.sin(2 * Math.PI * 440 * i / rate)), true);
+        }
+      }
+      return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+    }
+    const toneURL = wav(30, true);
+    const silentURL = wav(600, false);
+
+    function playbackState(value) {
+      if (navigator.mediaSession) navigator.mediaSession.playbackState = value;
+    }
+
+    function render() {
+      $('mode').disabled = phase !== 'stopped';
+      $('pause').disabled = phase !== 'tone';
+      $('stop').disabled = phase === 'stopped';
+      $('start').textContent = phase === 'stopped' ? 'Start tone' : 'Resume tone';
+      $('status').textContent = {
+        stopped: 'Stopped', tone: 'Tone requested', paused: 'Paused normally',
+        silent: 'Paused — silent file requested', interrupted: 'Playback interrupted or refused'
+      }[phase];
+    }
+
+    function ensureAudio() {
+      if (audio) return;
+      audio = new Audio();
+      audio.setAttribute('playsinline', '');
+      for (const event of ['play', 'playing', 'pause', 'ended', 'emptied', 'loadedmetadata', 'waiting', 'stalled', 'error']) {
+        audio.addEventListener(event, () => {
+          log(`audio:${event}`, event === 'error' ? { code: audio.error?.code } : {});
+          // Ignore queued pause events from our own source swaps. Only a
+          // currently paused tone is eligible to start the experiment.
+          if (event === 'pause' && audio.paused && !audio.ended) {
+            if (phase === 'tone') pause('element');
+            else if (phase === 'silent') {
+              phase = 'interrupted';
+              playbackState('paused');
+              render();
+            }
+          }
+          if (event === 'playing') {
+            playbackState(phase === 'tone' ? 'playing' : 'paused');
+            $('status').textContent = phase === 'tone' ? 'Tone playing' : 'Paused — silent file playing';
+          }
+          if (event === 'ended' && phase === 'silent') stop('silence-ended');
+        });
+      }
+      audio.addEventListener('timeupdate', () => {
+        if (Date.now() - lastTick < 10000) return;
+        lastTick = Date.now();
+        log('audio:timeupdate');
+      });
+    }
+
+    function requestPlay() {
+      const current = ++attempt;
+      audio.play().then(() => {
+        if (current === attempt) log('play:resolved');
+      }).catch((error) => {
+        log('play:rejected', { name: error.name, message: error.message });
+        if (current !== attempt) return;
+        phase = 'interrupted';
+        playbackState('paused');
+        render();
+      });
+    }
+
+    function start(origin) {
+      log('command:play', { origin, pausedForMs: pausedAt ? Date.now() - pausedAt : 0 });
+      if (phase === 'tone') return;
+      if (phase === 'stopped') mode = $('mode').value;
+      ensureAudio();
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; }
+      catch (error) { log('session:error', { message: error.message }); }
+      phase = 'tone';
+      pausedAt = 0;
+      audio.volume = 1;
+      audio.muted = false;
+      audio.loop = true;
+      audio.src = toneURL;
+      if (navigator.mediaSession) {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: 'iOS resume test', artist: mode });
+      }
+      playbackState('playing');
+      render();
+      requestPlay();
+    }
+
+    function pause(origin) {
+      log('command:pause', { origin });
+      if (phase !== 'tone') return;
+      pausedAt = Date.now();
+      ++attempt;
+      phase = mode === 'baseline' ? 'paused' : 'silent';
+      audio.pause();
+      playbackState('paused');
+      if (phase === 'silent') {
+        audio.loop = false; // Finite media also stops if JS timers are suspended.
+        audio.volume = mode === 'zero' ? 0 : 1;
+        audio.src = silentURL;
+        requestPlay();
+      }
+      render();
+    }
+
+    function stop(origin) {
+      log('command:stop', { origin });
+      ++attempt;
+      phase = 'stopped';
+      pausedAt = 0;
+      if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+      playbackState('none');
+      if (navigator.mediaSession) navigator.mediaSession.metadata = null;
+      render();
+    }
+
+    if (navigator.mediaSession) {
+      for (const [action, handler] of Object.entries({
+        play: () => start('remote'), pause: () => pause('remote'), stop: () => stop('remote')
+      })) {
+        try { navigator.mediaSession.setActionHandler(action, handler); }
+        catch (error) { log('handler:error', { action, message: error.message }); }
+      }
+    }
+    navigator.audioSession?.addEventListener('statechange', () => log('session:statechange'));
+    document.addEventListener('visibilitychange', () => log('visibilitychange'));
+    window.addEventListener('pagehide', (event) => log('pagehide', { persisted: event.persisted }));
+    window.addEventListener('pageshow', (event) => log('pageshow', { persisted: event.persisted }));
+    $('start').onclick = () => start('button');
+    $('pause').onclick = () => pause('button');
+    $('stop').onclick = () => stop('button');
+    $('clear').onclick = () => { entries = []; log('log:cleared'); };
+    $('download').onclick = () => {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ios-resume-${Date.now()}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    };
+    log('page:loaded', { userAgent: navigator.userAgent,
+      standalone: navigator.standalone === true || matchMedia('(display-mode: standalone)').matches });
+  </script>
+</body>
+</html>

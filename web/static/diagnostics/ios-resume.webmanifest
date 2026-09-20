@@ -1,0 +1,11 @@
+{
+  "id": "/diagnostics/ios-resume.html",
+  "name": "iOS resume test",
+  "short_name": "Resume test",
+  "start_url": "/diagnostics/ios-resume.html",
+  "scope": "/diagnostics/",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+}

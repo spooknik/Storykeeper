@@ -45,7 +45,9 @@ export default defineConfig({
 				navigateFallback: '/index.html',
 				// The Go server owns /api/* and /media/* — the service worker must never
 				// intercept, precache, or runtime-cache these paths.
-				navigateFallbackDenylist: [/^\/api\//, /^\/media\//],
+				// Standalone diagnostics must open their own HTML, including when the
+				// installed app's worker controls the navigation.
+				navigateFallbackDenylist: [/^\/api\//, /^\/media\//, /^\/diagnostics\//],
 				globIgnores: ['**/api/**', '**/media/**'],
 				runtimeCaching: []
 			}
