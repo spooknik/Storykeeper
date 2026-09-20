@@ -69,6 +69,11 @@ const WATCHDOG_MS = 2_000;
  * late `playing` still recovers the state on its own.
  */
 const PLAY_TIMEOUT_MS = 10_000;
+/**
+ * How long a hidden page can sit paused before iOS has torn its audio
+ * session down. Past this, the element needs a fresh src before play().
+ */
+const SESSION_DIES_AFTER_MS = 30_000;
 
 export class PlayerEngine {
 	status = $state<PlayerStatus>('idle');
@@ -351,6 +356,13 @@ export class PlayerEngine {
 			// seekTo after wantPlaying: if the rewind crosses back over a file
 			// boundary, seekTo's existing path swaps src and starts playback itself.
 			if (rewind > 0) this.seekTo(Math.max(0, this.positionMs - rewind));
+		}
+		// A play from the lock screen after a long pause: the page is still
+		// hidden, so onVisible() has not had the chance to flag the reload, but
+		// the audio session is just as dead. Re-assigning src inside this
+		// handler is allowed; play() on the stale element would only be silent.
+		if (pausedFor > SESSION_DIES_AFTER_MS && typeof document !== 'undefined' && document.hidden) {
+			this.reloadBeforePlay = true;
 		}
 		if (this.reloadBeforePlay) {
 			// WebKit 295518 mitigation: a stale element plays silence after reopen.
@@ -796,7 +808,7 @@ export class PlayerEngine {
 		this.syncPosition();
 		// Anything that was hidden for a while gets a fresh src before the next play():
 		// the audio pipeline may have been torn down (WebKit 295518).
-		if (Date.now() - this.hiddenAt > 30_000) this.reloadBeforePlay = true;
+		if (Date.now() - this.hiddenAt > SESSION_DIES_AFTER_MS) this.reloadBeforePlay = true;
 		this.emit('visible');
 		if (this.wantPlaying && (a.paused || a.ended)) {
 			// We meant to be playing but are not: either the file ended in the
